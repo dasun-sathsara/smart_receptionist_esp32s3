@@ -5,6 +5,7 @@
 #include "ui.h"
 #include "fingerprint.h"
 #include "logger.h"
+#include "esp_now_manager.h"
 
 #define LOG_BUFFER_SIZE 128
 
@@ -56,26 +57,36 @@ void handleFingerprintMatch(const Event &event);
 
 void handleFingerprintNoMatch(const Event &event);
 
+void handleSendCaptureImageCommand(const Event &event);
+
 void setup() {
     Serial.begin(115200);
-
-    delay(2000);
 
     Audio::begin();
     wifiHandler.begin(eventDispatcher);
 //    ui.begin(eventDispatcher);
     fingerprintHandler.begin(eventDispatcher);
 
+    ESPNow::begin(eventDispatcher);
+
     // Register callback functions with event dispatcher
-    eventDispatcher.registerCallback(EVENT_RECORD_START, &handleRecordStart);
-    eventDispatcher.registerCallback(EVENT_RECORD_STOP, &handleRecordStop);
-    eventDispatcher.registerCallback(EVENT_PLAYBACK_START, &handlePlaybackStart);
-    eventDispatcher.registerCallback(EVENT_PLAYBACK_STOP, &handlePlaybackStop);
-    eventDispatcher.registerCallback(EVENT_WEBSOCKET_CONNECTED, &handleWebSocketConnected);
-    eventDispatcher.registerCallback(EVENT_AUDIO_DATA_RECEIVED, &handleAudioDataReceived);
-    eventDispatcher.registerCallback(EVENT_AUDIO_CHUNK_READ, &handleAudioChunkRead);
-    eventDispatcher.registerCallback(EVENT_FINGERPRINT_MATCH, &handleFingerprintMatch);
-    eventDispatcher.registerCallback(EVENT_FINGERPRINT_NO_MATCH, &handleFingerprintNoMatch);
+    eventDispatcher.registerCallback(RECORD_START, &handleRecordStart);
+    eventDispatcher.registerCallback(RECORD_STOP, &handleRecordStop);
+    eventDispatcher.registerCallback(PLAYBACK_START, &handlePlaybackStart);
+    eventDispatcher.registerCallback(PLAYBACK_STOP, &handlePlaybackStop);
+    eventDispatcher.registerCallback(WEBSOCKET_CONNECTED, &handleWebSocketConnected);
+    eventDispatcher.registerCallback(AUDIO_DATA_RECEIVED, &handleAudioDataReceived);
+    eventDispatcher.registerCallback(AUDIO_CHUNK_READ, &handleAudioChunkRead);
+    eventDispatcher.registerCallback(FINGERPRINT_MATCH, &handleFingerprintMatch);
+    eventDispatcher.registerCallback(FINGERPRINT_NO_MATCH, &handleFingerprintNoMatch);
+
+    eventDispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND, handleSendCaptureImageCommand);
+
+    // Testing sending capture image command
+    delay(3000);
+    StaticJsonDocument<1> emptyDoc;
+    NetworkManager::sendEvent("motion_detected", emptyDoc.as<JsonObject>());
+    ESPNow::sendCommand("capture_image");
 }
 
 void loop() {
@@ -119,4 +130,8 @@ void handleFingerprintMatch(const Event &event) {
 void handleFingerprintNoMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint no match found!");
     // TODO: Implement
+}
+
+void handleSendCaptureImageCommand(const Event &event) {
+    ESPNow::sendCommand("capture_image");
 }

@@ -41,20 +41,22 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
                 p = handler->fingerprint.fingerFastSearch();
                 if (p == FINGERPRINT_OK) {
                     LOG_I(TAG, "Finger found!");
-                    handler->eventDispatcher->dispatchEvent({EVENT_FINGERPRINT_MATCH, ""});
+                    handler->eventDispatcher->dispatchEvent({FINGERPRINT_MATCH, ""});
                 } else if (p == FINGERPRINT_NOTFOUND) {
                     LOG_I(TAG, "No match found");
-                    handler->eventDispatcher->dispatchEvent({EVENT_FINGERPRINT_NO_MATCH, ""});
+                    handler->eventDispatcher->dispatchEvent({FINGERPRINT_NO_MATCH, ""});
                 } else {
                     LOG_E(TAG, "Finger search error: %d", p);
                 }
             } else {
-                LOG_E(TAG, "Image conversion error: %d", p);
+//                LOG_E(TAG, "Image conversion error: %d", p);
+                continue;
             }
         } else {
-            LOG_E(TAG, "Image capture error: %d", p);
+//            LOG_E(TAG, "Image capture error: %d", p);
+            continue;
         }
-        vTaskDelay(100);
+        vTaskDelay(1000);
     }
 }
 

@@ -145,7 +145,7 @@ void Audio::addDataToBuffer(const uint8_t *data, size_t length) {
             NetworkManager::sendAudioChunk(prependedBuffer, bytesRead + 6);
 
 
-//            Event event = {EVENT_AUDIO_CHUNK_READ, std::string(reinterpret_cast<char *>(prependedBuffer)),
+//            Event event = {AUDIO_CHUNK_READ, std::string(reinterpret_cast<char *>(prependedBuffer)),
 //                           bytesRead + 6};
 //            eventDispatcher->dispatchEvent(event);
         }

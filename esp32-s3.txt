@@ -294,100 +294,6 @@ static const unsigned char image_volume_loud_bits[]
 
 ########################################
 
-############# src\esp_now_manager.cpp #############
-
-#include "esp_now_manager.h"
-#include "logger.h"
-
-static const char *TAG = "ESPNow";
-
-EventDispatcher *ESPNow::eventDispatcher = nullptr;
-esp_now_peer_info_t ESPNow::peerInfo;
-
-// Replace with the MAC address of your ESP32-CAM
-const uint8_t ESPNow::broadcastAddress[] = {0x34, 0x98, 0x7A, 0xB6, 0x8E, 0x88};
-
-void ESPNow::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-
-    if (esp_now_init() != ESP_OK) {
-        LOG_E(TAG, "Error initializing ESP-NOW");
-        return;
-    }
-
-    esp_now_register_recv_cb(onDataReceived);
-    esp_now_register_send_cb(onDataSent);
-
-    memcpy(peerInfo.peer_addr, broadcastAddress, 6);
-    peerInfo.channel = ESPNOW_CHANNEL;
-    peerInfo.encrypt = false;
-
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-        LOG_E(TAG, "Failed to add peer");
-        return;
-    }
-
-    LOG_I(TAG, "ESP-NOW initialized successfully");
-}
-
-void ESPNow::sendCommand(const char *command) {
-    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) command, strlen(command));
-    if (result != ESP_OK) {
-        LOG_E(TAG, "Failed to send data: %d", result);
-    } else {
-        LOG_I(TAG, "Command sent successfully: %s", command);
-    }
-}
-
-void ESPNow::onDataReceived(const uint8_t *mac, const uint8_t *data, int len) {
-    char *receivedData = (char *) malloc(len + 1);
-    memcpy(receivedData, data, len);
-    receivedData[len] = '\0';
-
-    LOG_I(TAG, "Received data: %s", receivedData);
-    eventDispatcher->dispatchEvent({ESPNOW_DATA_RECEIVED, std::string(receivedData), static_cast<size_t>(len)});
-
-    free(receivedData);
-}
-
-void ESPNow::onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-    LOG_I(TAG, "Last Packet Send Status: %s", status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
-}
-
-###################################################
-
-############# src\esp_now_manager.h #############
-
-#ifndef ESP_NOW_MANAGER_H
-#define ESP_NOW_MANAGER_H
-
-#include <Arduino.h>
-#include <esp_now.h>
-#include "events.h"
-
-#define ESPNOW_CHANNEL 1
-
-class ESPNow {
-public:
-    static void begin(EventDispatcher &dispatcher);
-
-    static void sendCommand(const char *command);
-
-private:
-    static void onDataReceived(const uint8_t *mac, const uint8_t *data, int len);
-
-    static void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status);
-
-    static EventDispatcher *eventDispatcher;
-    static esp_now_peer_info_t peerInfo;
-    static const uint8_t broadcastAddress[];
-};
-
-#endif //ESP_NOW_MANAGER_H
-
-
-#################################################
-
 ############# src\events.cpp #############
 
 #include "events.h"
@@ -427,8 +333,6 @@ enum EventType {
     FINGERPRINT_NO_MATCH,
     AUDIO_DATA_RECEIVED,
     AUDIO_CHUNK_READ,
-    ESPNOW_DATA_RECEIVED,
-    SEND_CAPTURE_IMAGE_COMMAND
 };
 
 struct Event {
@@ -507,14 +411,12 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
                     LOG_E(TAG, "Finger search error: %d", p);
                 }
             } else {
-//                LOG_E(TAG, "Image conversion error: %d", p);
-                continue;
+                LOG_E(TAG, "Image conversion error: %d", p);
             }
         } else {
-//            LOG_E(TAG, "Image capture error: %d", p);
-            continue;
+            LOG_E(TAG, "Image capture error: %d", p);
         }
-        vTaskDelay(1000);
+        vTaskDelay(100);
     }
 }
 
@@ -587,7 +489,6 @@ extern void logger(LogLevel level, const char *tag, const char *format, ...); //
 #include "ui.h"
 #include "fingerprint.h"
 #include "logger.h"
-#include "esp_now_manager.h"
 
 #define LOG_BUFFER_SIZE 128
 
@@ -639,24 +540,15 @@ void handleFingerprintMatch(const Event &event);
 
 void handleFingerprintNoMatch(const Event &event);
 
-void handleSendCaptureImageCommand(const Event &event);
-
 void setup() {
     Serial.begin(115200);
 
-    // Wait until Serial is ready
-    while (!Serial) {
-        delay(100);
-    }
-
-    LOG_I(TAG, "Serial ready!");
+    delay(2000);
 
     Audio::begin();
     wifiHandler.begin(eventDispatcher);
 //    ui.begin(eventDispatcher);
     fingerprintHandler.begin(eventDispatcher);
-
-    ESPNow::begin(eventDispatcher);
 
     // Register callback functions with event dispatcher
     eventDispatcher.registerCallback(RECORD_START, &handleRecordStart);
@@ -668,14 +560,6 @@ void setup() {
     eventDispatcher.registerCallback(AUDIO_CHUNK_READ, &handleAudioChunkRead);
     eventDispatcher.registerCallback(FINGERPRINT_MATCH, &handleFingerprintMatch);
     eventDispatcher.registerCallback(FINGERPRINT_NO_MATCH, &handleFingerprintNoMatch);
-
-    eventDispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND, handleSendCaptureImageCommand);
-
-    // Testing sending capture image command
-    delay(3000);
-    StaticJsonDocument<1> emptyDoc;
-    NetworkManager::sendEvent("motion_detected", emptyDoc.as<JsonObject>());
-    ESPNow::sendCommand("capture_image");
 }
 
 void loop() {
@@ -700,8 +584,6 @@ void handlePlaybackStop(const Event &event) {
 }
 
 void handleWebSocketConnected(const Event &event) {
-    delay(1000);
-    LOG_I(TAG, "CC!");
     NetworkManager::sendInitMessage();
 }
 
@@ -723,9 +605,6 @@ void handleFingerprintNoMatch(const Event &event) {
     // TODO: Implement
 }
 
-void handleSendCaptureImageCommand(const Event &event) {
-    ESPNow::sendCommand("capture_image");
-}
 
 ########################################
 
@@ -825,24 +704,12 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
 
 void NetworkManager::sendInitMessage() {
     webSocket.sendTXT(R"({"event_type":"init","data":{"device":"esp_s3"}})");
-    LOG_I(TAG, "Sent init message");
+    LOG_D(TAG, "Sent init message");
 }
 
 void NetworkManager::sendAudioChunk(const uint8_t *data, size_t len) {
     webSocket.sendBIN(data, len);
-    LOG_I(TAG, "Sent audio chunk");
-}
-
-void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
-    StaticJsonDocument<256> doc;
-    doc["event_type"] = eventType;
-    doc["data"] = data;
-
-    char buffer[256];
-    size_t length = serializeJson(doc, buffer);
-
-    webSocket.sendTXT(buffer, length);
-    LOG_I(TAG, "Sent event: %s", eventType);
+    LOG_D(TAG, "Sent audio chunk");
 }
 
 ###################################################
@@ -854,7 +721,6 @@ void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
 
 #include "WebSocketsClient.h"
 #include "events.h"
-#include <ArduinoJson.h>
 
 class NetworkManager {
 public:
@@ -865,8 +731,6 @@ public:
     static void sendInitMessage();
 
     static void sendAudioChunk(const uint8_t *data, size_t len);
-
-    static void sendEvent(const char *eventType, const JsonObject &data);
 
 private:
     static void webSocketEvent(WStype_t type, uint8_t *payload, size_t length);

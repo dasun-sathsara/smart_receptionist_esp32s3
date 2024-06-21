@@ -117,3 +117,33 @@
 2024-06-20 10:10:01,742 - INFO - Processing: src\ui.cpp
 2024-06-20 10:10:01,742 - INFO - Processing: src\ui.h
 2024-06-20 10:10:01,743 - INFO - Merged text saved to: merged_text.txt
+2024-06-20 18:54:14,698 - INFO - Processing: src\audio.cpp
+2024-06-20 18:54:14,698 - INFO - Processing: src\audio.h
+2024-06-20 18:54:14,698 - INFO - Processing: src\config.h
+2024-06-20 18:54:14,698 - INFO - Processing: src\events.cpp
+2024-06-20 18:54:14,698 - INFO - Processing: src\events.h
+2024-06-20 18:54:14,698 - INFO - Processing: src\fingerprint.cpp
+2024-06-20 18:54:14,698 - INFO - Processing: src\fingerprint.h
+2024-06-20 18:54:14,698 - INFO - Processing: src\logger.h
+2024-06-20 18:54:14,698 - INFO - Processing: src\main.cpp
+2024-06-20 18:54:14,698 - INFO - Processing: src\network_manager.cpp
+2024-06-20 18:54:14,698 - INFO - Processing: src\network_manager.h
+2024-06-20 18:54:14,698 - INFO - Processing: src\ui.cpp
+2024-06-20 18:54:14,698 - INFO - Processing: src\ui.h
+2024-06-20 18:54:14,698 - INFO - Merged text saved to: merged_text.txt
+2024-06-20 20:18:10,265 - INFO - Processing: src\audio.cpp
+2024-06-20 20:18:10,266 - INFO - Processing: src\audio.h
+2024-06-20 20:18:10,266 - INFO - Processing: src\config.h
+2024-06-20 20:18:10,267 - INFO - Processing: src\esp_now_manager.cpp
+2024-06-20 20:18:10,267 - INFO - Processing: src\esp_now_manager.h
+2024-06-20 20:18:10,267 - INFO - Processing: src\events.cpp
+2024-06-20 20:18:10,267 - INFO - Processing: src\events.h
+2024-06-20 20:18:10,267 - INFO - Processing: src\fingerprint.cpp
+2024-06-20 20:18:10,268 - INFO - Processing: src\fingerprint.h
+2024-06-20 20:18:10,268 - INFO - Processing: src\logger.h
+2024-06-20 20:18:10,268 - INFO - Processing: src\main.cpp
+2024-06-20 20:18:10,268 - INFO - Processing: src\network_manager.cpp
+2024-06-20 20:18:10,269 - INFO - Processing: src\network_manager.h
+2024-06-20 20:18:10,269 - INFO - Processing: src\ui.cpp
+2024-06-20 20:18:10,269 - INFO - Processing: src\ui.h
+2024-06-20 20:18:10,269 - INFO - Merged text saved to: merged_text.txt

@@ -17,16 +17,15 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
     int connectionAttempts = 0;
     while (WiFiClass::status() != WL_CONNECTED && connectionAttempts < 10) {
         delay(500);
-        Serial.print(".");
         connectionAttempts++;
     }
 
     if (WiFiClass::status() == WL_CONNECTED) {
         LOG_I(TAG, "Connected to WiFi network");
-        eventDispatcher->dispatchEvent({EVENT_WIFI_CONNECTED, ""});
+        eventDispatcher->dispatchEvent({WIFI_CONNECTED, ""});
     } else {
         LOG_E(TAG, "Failed to connect to WiFi network");
-        eventDispatcher->dispatchEvent({EVENT_WIFI_DISCONNECTED, ""});
+        eventDispatcher->dispatchEvent({WIFI_DISCONNECTED, ""});
         return;
     }
 
@@ -52,12 +51,12 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
     switch (type) {
         case WStype_DISCONNECTED:
             LOG_I(TAG, "WebSocket disconnected");
-            eventDispatcher->dispatchEvent({EVENT_WEBSOCKET_DISCONNECTED, ""});
+            eventDispatcher->dispatchEvent({WEBSOCKET_DISCONNECTED, ""});
             // Handle WebSocket disconnection (e.g., reattempt connection)
             break;
         case WStype_CONNECTED:
             LOG_I(TAG, "WebSocket connected");
-            eventDispatcher->dispatchEvent({EVENT_WEBSOCKET_CONNECTED, ""});
+            eventDispatcher->dispatchEvent({WEBSOCKET_CONNECTED, ""});
             break;
         case WStype_TEXT: {
 
@@ -72,30 +71,42 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             LOG_I(TAG, "Received event: %s", event_type);
 
             if (strcmp(event_type, "start_recording") == 0) {
-                eventDispatcher->dispatchEvent({EVENT_RECORD_START, "", 0});
+                eventDispatcher->dispatchEvent({RECORD_START, "", 0});
             } else if (strcmp(event_type, "stop_recording") == 0) {
-                eventDispatcher->dispatchEvent({EVENT_RECORD_STOP, "", 0});
+                eventDispatcher->dispatchEvent({RECORD_STOP, "", 0});
             } else if (strcmp(event_type, "start_playing") == 0) {
-                eventDispatcher->dispatchEvent({EVENT_PLAYBACK_START, "", 0});
+                eventDispatcher->dispatchEvent({PLAYBACK_START, "", 0});
             } else if (strcmp(event_type, "stop_playing") == 0) {
-                eventDispatcher->dispatchEvent({EVENT_PLAYBACK_STOP, "", 0});
+                eventDispatcher->dispatchEvent({PLAYBACK_STOP, "", 0});
             }
             break;
         }
         case WStype_BIN: {
         }
-            Event event = {EVENT_AUDIO_DATA_RECEIVED, std::string(reinterpret_cast<char *>(payload), length), length};
+            Event event = {AUDIO_DATA_RECEIVED, std::string(reinterpret_cast<char *>(payload), length), length};
             eventDispatcher->dispatchEvent(event);
             break;
     }
 }
 
 void NetworkManager::sendInitMessage() {
+    LOG_I(TAG, "Sent init message");
     webSocket.sendTXT(R"({"event_type":"init","data":{"device":"esp_s3"}})");
-    LOG_D(TAG, "Sent init message");
 }
 
 void NetworkManager::sendAudioChunk(const uint8_t *data, size_t len) {
     webSocket.sendBIN(data, len);
-    LOG_D(TAG, "Sent audio chunk");
+    LOG_I(TAG, "Sent audio chunk");
+}
+
+void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
+    StaticJsonDocument<256> doc;
+    doc["event_type"] = eventType;
+    doc["data"] = data;
+
+    char buffer[256];
+    size_t length = serializeJson(doc, buffer);
+
+    webSocket.sendTXT(buffer, length);
+    LOG_I(TAG, "Sent event: %s", eventType);
 }
