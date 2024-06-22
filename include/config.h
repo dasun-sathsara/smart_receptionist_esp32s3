@@ -11,14 +11,29 @@
 #define WS_SERVER "192.168.8.35"
 #define WS_PORT 8765
 
+// L298N motor driver configuration
+#define MOTOR_PIN1 26
+#define MOTOR_PIN2 27
+#define MOTOR_ENABLE 14
+
+// PIR sensor configuration
+#define PIR_PIN 25
+
+// Break beam sensor configuration
+#define BREAK_BEAM_PIN 33
+
+// LED strip configuration
+#define LED_STRIP_PIN 32
+
+
 // I2S configuration
 #define I2S_PIN_BCLK 13
 #define I2S_PIN_DATA 15
 #define I2S_PIN_LRCK 12
 
 #define I2S_PIN_INMP441_SD 5
-#define I2S_PIN_INMP441_WS 16
-#define I2S_PIN_INMP441_SCK 17
+#define I2S_PIN_INMP441_WS 11
+#define I2S_PIN_INMP441_SCK 12
 
 // Audio settings
 #define SAMPLE_RATE 44100
@@ -31,8 +46,8 @@
 #define I2S_BUFFER_SIZE (1024 * 8) // Adjust as needed
 
 // Fingerprint sensor configuration
-#define FINGERPRINT_RX 18
 #define FINGERPRINT_TX 17
+#define FINGERPRINT_RX 18
 
 // OLED I2C address
 #define OLED_ADDRESS 0x3C
@@ -57,8 +72,18 @@ static const unsigned char image_volume_loud_bits[]
                         0x10,
                         0x42, 0x04, 0x20, 0x22, 0x02, 0x40, 0x02, 0x01, 0x80, 0x83, 0x00, 0x00, 0x00, 0x00};
 
-// Fingerprint sensor configuration
-#define FINGERPRINT_RX_PIN 16
-#define FINGERPRINT_TX_PIN 17
+
+// Define keypad size
+const byte ROWS = 4;
+const byte COLS = 4;
+
+char hexaKeys[ROWS][COLS] = {
+        {'0', '1', '2', '3'},
+        {'4', '5', '6', '7'},
+        {'8', '9', 'A', 'B'},
+        {'C', 'D', 'E', 'F'}
+};
+byte rowPins[ROWS] = {3, 2, 1, 0};
+byte colPins[COLS] = {7, 6, 5, 4};
 
 #endif // CONFIG_H

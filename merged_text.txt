@@ -1,183 +1,4 @@
-############# src\audio.cpp #############
-
-#include "audio.h"
-#include "config.h"
-#include "network_manager.h"
-#include <esp_log.h>
-
-static const char *TAG = "AUDIO";
-
-const i2s_config_t Audio::i2sConfigRx = {
-        .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_RX),
-        .sample_rate = SAMPLE_RATE,
-        .bits_per_sample = (i2s_bits_per_sample_t) BITS_PER_SAMPLE,
-        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-        .communication_format = (i2s_comm_format_t) (I2S_COMM_FORMAT_STAND_I2S),
-        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count = DMA_BUF_COUNT,
-        .dma_buf_len = DMA_BUF_LEN,
-        .use_apll = false,
-        .tx_desc_auto_clear = true,
-        .fixed_mclk = 0
-};
-
-const i2s_pin_config_t Audio::i2sPinConfigRx = {
-        .bck_io_num = I2S_PIN_INMP441_SCK,
-        .ws_io_num = I2S_PIN_INMP441_WS,
-        .data_out_num = I2S_PIN_NO_CHANGE,
-        .data_in_num = I2S_PIN_INMP441_SD
-};
-
-const i2s_config_t Audio::i2sConfigTx = {
-        .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_TX),
-        .sample_rate = SAMPLE_RATE,
-        .bits_per_sample = (i2s_bits_per_sample_t) BITS_PER_SAMPLE,
-        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-        .communication_format = (i2s_comm_format_t) (I2S_COMM_FORMAT_STAND_I2S),
-        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count = DMA_BUF_COUNT,
-        .dma_buf_len = DMA_BUF_LEN,
-        .use_apll = false
-};
-
-const i2s_pin_config_t Audio::i2sPinConfigTx = {
-        .bck_io_num = I2S_PIN_BCLK,
-        .ws_io_num = I2S_PIN_LRCK,
-        .data_out_num = I2S_PIN_DATA,
-        .data_in_num = I2S_PIN_NO_CHANGE
-};
-
-SemaphoreHandle_t Audio::i2sBufferMutex = nullptr;
-uint8_t *Audio::i2sBuffer = nullptr;
-size_t Audio::i2sBufferSize = I2S_BUFFER_SIZE;
-volatile size_t Audio::i2sBufferHead = 0;
-volatile size_t Audio::i2sBufferTail = 0;
-TaskHandle_t Audio::i2sReaderTaskHandle = nullptr;
-TaskHandle_t Audio::i2sWriterTaskHandle = nullptr;
-
-void Audio::begin() {
-    i2sBufferMutex = xSemaphoreCreateMutex();
-
-    // Allocate memory for the I2S buffer dynamically
-    i2sBuffer = (uint8_t *) malloc(i2sBufferSize * sizeof(uint8_t));
-
-    if (i2sBuffer == nullptr) {
-        ESP_LOGE(TAG, "Error allocating memory for I2S buffer!");
-    }
-
-    // Initialize I2S RX
-    if (i2s_driver_install(I2S_NUM_1, &i2sConfigRx, 0, nullptr) != ESP_OK) {
-        ESP_LOGE(TAG, "Error installing I2S RX driver!");
-    }
-
-    i2s_set_pin(I2S_NUM_1, &i2sPinConfigRx);
-    i2s_zero_dma_buffer(I2S_NUM_1);
-
-    // Initialize I2S TX
-    if (i2s_driver_install(I2S_NUM_0, &i2sConfigTx, 0, nullptr) != ESP_OK) {
-        ESP_LOGE(TAG, "Error installing I2S TX driver!");
-    }
-    i2s_set_pin(I2S_NUM_0, &i2sPinConfigTx);
-    i2s_zero_dma_buffer(I2S_NUM_0);
-
-    xTaskCreatePinnedToCore(i2sReaderTask, "I2S Reader Task", 8192, nullptr, 2, &i2sReaderTaskHandle, 1);
-    xTaskCreatePinnedToCore(i2sWriterTask, "I2S Writer Task", 8192, nullptr, 3, &i2sWriterTaskHandle, 1);
-
-    vTaskSuspend(i2sReaderTaskHandle); // Initially suspend the reader task
-    vTaskSuspend(i2sWriterTaskHandle); // Initially suspend the writer task
-}
-
-void Audio::startRecording() {
-    vTaskResume(i2sReaderTaskHandle);
-    ESP_LOGI(TAG, "Recording started");
-}
-
-void Audio::stopRecording() {
-    vTaskSuspend(i2sReaderTaskHandle);
-    ESP_LOGI(TAG, "Recording stopped");
-}
-
-void Audio::startPlayback() {
-    vTaskResume(i2sWriterTaskHandle);
-    ESP_LOGI(TAG, "Playback started");
-}
-
-void Audio::stopPlayback() {
-    vTaskSuspend(i2sWriterTaskHandle);
-    ESP_LOGI(TAG, "Playback stopped");
-
-    // Clear the I2S DMA buffer
-    i2s_zero_dma_buffer(I2S_NUM_0);
-
-    // Clear the buffer when playback stops
-    if (xSemaphoreTake(i2sBufferMutex, portMAX_DELAY) == pdTRUE) {
-        i2sBufferHead = 0;
-        i2sBufferTail = 0;
-        xSemaphoreGive(i2sBufferMutex);
-    }
-}
-
-void Audio::addDataToBuffer(const uint8_t *data, size_t length) {
-    if (xSemaphoreTake(i2sBufferMutex, portMAX_DELAY) == pdTRUE) {
-        for (size_t i = 0; i < length; i++) {
-            i2sBuffer[i2sBufferHead] = data[i];
-            i2sBufferHead = (i2sBufferHead + 1) % I2S_BUFFER_SIZE;
-            if (i2sBufferHead == i2sBufferTail) // Buffer overflow, discard oldest data
-            {
-                i2sBufferTail = (i2sBufferTail + 1) % I2S_BUFFER_SIZE;
-            }
-        }
-        xSemaphoreGive(i2sBufferMutex);
-    }
-}
-
-[[noreturn]] void Audio::i2sReaderTask(void *parameter) {
-    size_t bytesRead = 0;
-
-    // Dynamically allocate i2SMicBuffer
-    auto *i2SMicBuffer = new uint8_t[DMA_BUF_LEN * 2];
-    auto *prependedBuffer = new uint8_t[DMA_BUF_LEN * 2 + 6];
-
-    while (true) {
-        i2s_read(I2S_NUM_1, i2SMicBuffer, DMA_BUF_LEN * 2, &bytesRead, portMAX_DELAY); // Read from Microphone
-        if (bytesRead > 0) {
-            memcpy(prependedBuffer, "AUDIO:", 6);
-            memcpy(prependedBuffer + 6, i2SMicBuffer, bytesRead);
-
-            NetworkManager::sendAudioChunk(prependedBuffer, bytesRead + 6);
-
-
-//            Event event = {AUDIO_CHUNK_READ, std::string(reinterpret_cast<char *>(prependedBuffer)),
-//                           bytesRead + 6};
-//            eventDispatcher->dispatchEvent(event);
-        }
-
-    }
-
-    // Free allocated memory
-    delete[] i2SMicBuffer;
-    delete[] prependedBuffer;
-}
-
-[[noreturn]] void Audio::i2sWriterTask(void *parameter) {
-    size_t bytesWritten = 0;
-    for (;;) {
-        if (xSemaphoreTake(i2sBufferMutex, portMAX_DELAY) == pdTRUE) {
-            if (i2sBufferTail != i2sBufferHead) {
-                size_t bytesToWrite = (i2sBufferTail < i2sBufferHead) ? (i2sBufferHead - i2sBufferTail) : (
-                        I2S_BUFFER_SIZE - i2sBufferTail);
-                i2s_write(I2S_NUM_0, &i2sBuffer[i2sBufferTail], bytesToWrite, &bytesWritten, portMAX_DELAY);
-                i2sBufferTail = (i2sBufferTail + bytesWritten) % I2S_BUFFER_SIZE;
-            }
-            xSemaphoreGive(i2sBufferMutex);
-        }
-        vTaskDelay(10);
-    }
-}
-
-#########################################
-
-############# src\audio.h #############
+############# include\audio.h #############
 
 // audio.h
 #ifndef AUDIO_H
@@ -223,9 +44,9 @@ private:
 
 #endif // AUDIO_H
 
-#######################################
+###########################################
 
-############# src\config.h #############
+############# include\config.h #############
 
 #ifndef CONFIG_H
 #define CONFIG_H
@@ -240,14 +61,29 @@ private:
 #define WS_SERVER "192.168.8.35"
 #define WS_PORT 8765
 
+// L298N motor driver configuration
+#define MOTOR_PIN1 26
+#define MOTOR_PIN2 27
+#define MOTOR_ENABLE 14
+
+// PIR sensor configuration
+#define PIR_PIN 25
+
+// Break beam sensor configuration
+#define BREAK_BEAM_PIN 33
+
+// LED strip configuration
+#define LED_STRIP_PIN 32
+
+
 // I2S configuration
 #define I2S_PIN_BCLK 13
 #define I2S_PIN_DATA 15
 #define I2S_PIN_LRCK 12
 
 #define I2S_PIN_INMP441_SD 5
-#define I2S_PIN_INMP441_WS 16
-#define I2S_PIN_INMP441_SCK 17
+#define I2S_PIN_INMP441_WS 11
+#define I2S_PIN_INMP441_SCK 12
 
 // Audio settings
 #define SAMPLE_RATE 44100
@@ -260,8 +96,8 @@ private:
 #define I2S_BUFFER_SIZE (1024 * 8) // Adjust as needed
 
 // Fingerprint sensor configuration
-#define FINGERPRINT_RX 18
 #define FINGERPRINT_TX 17
+#define FINGERPRINT_RX 18
 
 // OLED I2C address
 #define OLED_ADDRESS 0x3C
@@ -286,77 +122,11 @@ static const unsigned char image_volume_loud_bits[]
                         0x10,
                         0x42, 0x04, 0x20, 0x22, 0x02, 0x40, 0x02, 0x01, 0x80, 0x83, 0x00, 0x00, 0x00, 0x00};
 
-// Fingerprint sensor configuration
-#define FINGERPRINT_RX_PIN 16
-#define FINGERPRINT_TX_PIN 17
-
 #endif // CONFIG_H
 
-########################################
+############################################
 
-############# src\esp_now_manager.cpp #############
-
-#include "esp_now_manager.h"
-#include "logger.h"
-
-static const char *TAG = "ESPNow";
-
-EventDispatcher *ESPNow::eventDispatcher = nullptr;
-esp_now_peer_info_t ESPNow::peerInfo;
-
-// Replace with the MAC address of your ESP32-CAM
-const uint8_t ESPNow::broadcastAddress[] = {0x34, 0x98, 0x7A, 0xB6, 0x8E, 0x88};
-
-void ESPNow::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-
-    if (esp_now_init() != ESP_OK) {
-        LOG_E(TAG, "Error initializing ESP-NOW");
-        return;
-    }
-
-    esp_now_register_recv_cb(onDataReceived);
-    esp_now_register_send_cb(onDataSent);
-
-    memcpy(peerInfo.peer_addr, broadcastAddress, 6);
-    peerInfo.channel = ESPNOW_CHANNEL;
-    peerInfo.encrypt = false;
-
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-        LOG_E(TAG, "Failed to add peer");
-        return;
-    }
-
-    LOG_I(TAG, "ESP-NOW initialized successfully");
-}
-
-void ESPNow::sendCommand(const char *command) {
-    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) command, strlen(command));
-    if (result != ESP_OK) {
-        LOG_E(TAG, "Failed to send data: %d", result);
-    } else {
-        LOG_I(TAG, "Command sent successfully: %s", command);
-    }
-}
-
-void ESPNow::onDataReceived(const uint8_t *mac, const uint8_t *data, int len) {
-    char *receivedData = (char *) malloc(len + 1);
-    memcpy(receivedData, data, len);
-    receivedData[len] = '\0';
-
-    LOG_I(TAG, "Received data: %s", receivedData);
-    eventDispatcher->dispatchEvent({ESPNOW_DATA_RECEIVED, std::string(receivedData), static_cast<size_t>(len)});
-
-    free(receivedData);
-}
-
-void ESPNow::onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-    LOG_I(TAG, "Last Packet Send Status: %s", status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
-}
-
-###################################################
-
-############# src\esp_now_manager.h #############
+############# include\esp_now_manager.h #############
 
 #ifndef ESP_NOW_MANAGER_H
 #define ESP_NOW_MANAGER_H
@@ -386,25 +156,9 @@ private:
 #endif //ESP_NOW_MANAGER_H
 
 
-#################################################
+#####################################################
 
-############# src\events.cpp #############
-
-#include "events.h"
-
-void EventDispatcher::registerCallback(EventType type, EventCallback callback) {
-    callbacks[type].push_back(callback);
-}
-
-void EventDispatcher::dispatchEvent(const Event &event) {
-    for (auto &callback: callbacks[event.type]) {
-        callback(event);
-    }
-}
-
-##########################################
-
-############# src\events.h #############
+############# include\events.h #############
 
 #ifndef EVENTS_H
 #define EVENTS_H
@@ -428,7 +182,10 @@ enum EventType {
     AUDIO_DATA_RECEIVED,
     AUDIO_CHUNK_READ,
     ESPNOW_DATA_RECEIVED,
-    SEND_CAPTURE_IMAGE_COMMAND
+    SEND_CAPTURE_IMAGE_COMMAND,
+    MOTION_DETECTED,
+    BREAK_BEAM_TRIGGERED,
+    CHANGE_STATE
 };
 
 struct Event {
@@ -451,8 +208,223 @@ private:
 
 #endif // EVENTS_H
 
+############################################
+
+############# include\fingerprint.h #############
+
+#ifndef FINGERPRINT_H
+#define FINGERPRINT_H
+
+#include "Adafruit_Fingerprint.h"
+#include "events.h"
+
+class FingerprintHandler {
+public:
+    FingerprintHandler(const HardwareSerial &serial);
+
+    void begin(EventDispatcher &dispatcher);
+
+private:
+    static void fingerprintTask(void *parameter);
+
+    HardwareSerial mySerial;
+    Adafruit_Fingerprint fingerprint;
+    EventDispatcher *eventDispatcher{};
+};
+
+#endif // FINGERPRINT_H
+
+#################################################
+
+############# include\gate_control.h #############
+
+#ifndef GATE_CONTROL_H
+#define GATE_CONTROL_H
+
+#include <Arduino.h>
+#include "events.h"
+
+class GateControl {
+public:
+    GateControl(int motorPin1, int motorPin2, int enablePin);
+
+    void begin(EventDispatcher &dispatcher);
+
+    void openGate();
+
+    void closeGate();
+
+    bool isGateMoving() const;
+
+    bool isGateOpen() const;
+
+
+private:
+    static void gateControlTask(void *parameter);
+
+
+    int _motorPin1;
+    int _motorPin2;
+    int _enablePin;
+
+    unsigned long _movementStartTime = 0;
+    bool _isMoving = false;
+    static volatile bool _isGateOpen;
+
+    static EventDispatcher *eventDispatcher;
+
+
+};
+
+#endif // GATE_CONTROL_H
+
+
+##################################################
+
+############# include\led_control.h #############
+
+#ifndef LED_CONTROL_H
+#define LED_CONTROL_H
+
+#include <Arduino.h>
+#include "events.h"
+
+class LEDControl {
+public:
+    LEDControl(int pin);
+
+    void begin(EventDispatcher &dispatcher);
+
+    void turnOn();
+
+    void turnOff();
+
+private:
+    int _pin;
+    static EventDispatcher *eventDispatcher;
+};
+
+#endif // LED_CONTROL_H
+
+#################################################
+
+############# include\logger.h #############
+
+#ifndef LOGGER_H
+#define LOGGER_H
+
+#include <Arduino.h>
+#include <cstdarg>
+
+enum LogLevel {
+    LOG_NONE = 0,   // No logging
+    LOG_ERROR,
+    LOG_WARN,
+    LOG_INFO,
+    LOG_DEBUG
+};
+
+extern LogLevel currentLogLevel; // Declare as extern
+
+extern void logger(LogLevel level, const char *tag, const char *format, ...); // Declare as extern
+
+// Macros for convenience (similar to esp_log)
+#define LOG_E(tag, format, ...) logger(LOG_ERROR, tag, format, ##__VA_ARGS__)
+#define LOG_W(tag, format, ...) logger(LOG_WARN,  tag, format, ##__VA_ARGS__)
+#define LOG_I(tag, format, ...) logger(LOG_INFO,  tag, format, ##__VA_ARGS__)
+#define LOG_D(tag, format, ...) logger(LOG_DEBUG, tag, format, ##__VA_ARGS__)
+
+#endif // LOGGER_H
+
+
+############################################
+
+############# include\network_manager.h #############
+
+#ifndef WIFI_H
+#define WIFI_H
+
+#include "WebSocketsClient.h"
+#include "events.h"
+#include "ArduinoJson.h"
+
+class NetworkManager {
+public:
+    void begin(EventDispatcher &dispatcher);
+
+    static void loop();
+
+    static void sendInitMessage();
+
+    static void sendAudioChunk(const uint8_t *data, size_t len);
+
+    static void sendEvent(const char *eventType, const JsonObject &data);
+
+private:
+    static void webSocketEvent(WStype_t type, uint8_t *payload, size_t length);
+
+    static EventDispatcher *eventDispatcher;
+    static WebSocketsClient webSocket;
+
+};
+
+#endif // WIFI_H
+
+#####################################################
+
+############# include\sensors.h #############
+
+#ifndef SENSORS_H
+#define SENSORS_H
+
+#include <Arduino.h>
+#include "events.h"
+
+class PIRSensor {
+public:
+    PIRSensor(int pin);
+    void begin(EventDispatcher &dispatcher);
+
+private:
+    static void pirTask(void *parameter);
+    int _pin;
+    static EventDispatcher *eventDispatcher;
+    static volatile bool cooldownActive;
+};
+
+class BreakBeamSensor {
+public:
+    BreakBeamSensor(int pin);
+    void begin(EventDispatcher &dispatcher);
+
+private:
+    static void breakBeamTask(void *parameter);
+    int _pin;
+    static EventDispatcher *eventDispatcher;
+};
+
+#endif // SENSORS_H
+
+#############################################
 
 ########################################
+
+
+############# src\events.cpp #############
+
+#include "events.h"
+
+void EventDispatcher::registerCallback(EventType type, EventCallback callback) {
+    callbacks[type].push_back(callback);
+}
+
+void EventDispatcher::dispatchEvent(const Event &event) {
+    for (auto &callback: callbacks[event.type]) {
+        callback(event);
+    }
+}
+
+##########################################
 
 ############# src\fingerprint.cpp #############
 
@@ -462,12 +434,14 @@ private:
 
 static const char *TAG = "FINGERPRINT";
 
-FingerprintHandler::FingerprintHandler() : fingerprint(Adafruit_Fingerprint(&Serial2)) {
-    Serial2.begin(FINGERPRINT_BAUDRATE_57600, SERIAL_8N1, FINGERPRINT_RX, FINGERPRINT_TX);
+FingerprintHandler::FingerprintHandler(const HardwareSerial &serial) : mySerial(serial), fingerprint(&mySerial) {
+    mySerial.begin(57600, SERIAL_8N1, FINGERPRINT_RX, FINGERPRINT_TX);
+    fingerprint.begin(57600);
 }
 
 void FingerprintHandler::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+
 
     if (fingerprint.verifyPassword()) {
         LOG_I(TAG, "Found fingerprint sensor!");
@@ -520,63 +494,98 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 
 
 
+
+
+
 ###############################################
 
-############# src\fingerprint.h #############
+############# src\gate_control.cpp #############
 
-#ifndef FINGERPRINT_H
-#define FINGERPRINT_H
+#include "gate_control.h"
+#include "logger.h"
 
-#include "Adafruit_Fingerprint.h"
-#include "events.h"
+static const char *TAG = "GATE_CONTROL";
 
-class FingerprintHandler {
-public:
-    FingerprintHandler();
+EventDispatcher *GateControl::eventDispatcher = nullptr;
 
-    void begin(EventDispatcher &dispatcher);
+GateControl::GateControl(int motorPin1, int motorPin2, int enablePin)
+        : _motorPin1(motorPin1), _motorPin2(motorPin2), _enablePin(enablePin) {
+}
 
-private:
-    static void fingerprintTask(void *parameter);
+void GateControl::begin(EventDispatcher &dispatcher) {
+    eventDispatcher = &dispatcher;
+    pinMode(_motorPin1, OUTPUT);
+    pinMode(_motorPin2, OUTPUT);
+    pinMode(_enablePin, OUTPUT);
 
-    Adafruit_Fingerprint fingerprint;
-    EventDispatcher *eventDispatcher{};
-};
+    xTaskCreate(gateControlTask, "Gate Control Task", 4096, this, 1, nullptr);
 
-#endif // FINGERPRINT_H
+    LOG_I(TAG, "Gate control initialized");
+}
 
-#############################################
+void GateControl::openGate() {
+    // Check if the gate is already open or in motion
+    if (isGateOpen() || isGateMoving()) {
+        LOG_I(TAG, "Gate is already open or in motion.");
+        return;
+    } else {
+        digitalWrite(_motorPin1, HIGH);
+        digitalWrite(_motorPin2, LOW);
+        digitalWrite(_enablePin, HIGH);
+        _movementStartTime = millis();
+        _isMoving = true;
+        LOG_I(TAG, "Gate opening started...");
+    }
+}
 
-############# src\logger.h #############
+void GateControl::closeGate() {
+    // Check if the gate is already closed or in motion
+    if (!isGateOpen() || isGateMoving()) {
+        LOG_I(TAG, "Gate is already closed or in motion.");
+        return;
+    } else {
+        digitalWrite(_motorPin1, LOW);
+        digitalWrite(_motorPin2, HIGH);
+        digitalWrite(_enablePin, HIGH);
+        _movementStartTime = millis();
+        _isMoving = true;
+        LOG_I(TAG, "Gate closing started...");
+    }
 
-#ifndef LOGGER_H
-#define LOGGER_H
+}
 
-#include <Arduino.h>
-#include <cstdarg>
+bool GateControl::isGateMoving() const {
+    return _isMoving;
+}
 
-enum LogLevel {
-    LOG_NONE = 0,   // No logging
-    LOG_ERROR,
-    LOG_WARN,
-    LOG_INFO,
-    LOG_DEBUG
-};
-
-extern LogLevel currentLogLevel; // Declare as extern
-
-extern void logger(LogLevel level, const char *tag, const char *format, ...); // Declare as extern
-
-// Macros for convenience (similar to esp_log)
-#define LOG_E(tag, format, ...) logger(LOG_ERROR, tag, format, ##__VA_ARGS__)
-#define LOG_W(tag, format, ...) logger(LOG_WARN,  tag, format, ##__VA_ARGS__)
-#define LOG_I(tag, format, ...) logger(LOG_INFO,  tag, format, ##__VA_ARGS__)
-#define LOG_D(tag, format, ...) logger(LOG_DEBUG, tag, format, ##__VA_ARGS__)
-
-#endif // LOGGER_H
+bool GateControl::isGateOpen() const {
+    return _isGateOpen;
+}
 
 
-########################################
+void GateControl::gateControlTask(void *parameter) {
+    auto *gateControl = static_cast<GateControl *>(parameter);
+
+    while (true) {
+        if (gateControl->isGateMoving() && millis() - gateControl->_movementStartTime > 7000) {
+            // Stop the motor
+            digitalWrite(gateControl->_enablePin, LOW);
+            gateControl->_isMoving = false;
+
+            if (gateControl->isGateOpen()) {
+                // Gate is open
+                _isGateOpen = true;
+            } else {
+                // Gate is closed
+                _isGateOpen = false;
+
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100)); // Check every 100ms
+    }
+}
+
 
 ############# src\main.cpp #############
 
@@ -588,6 +597,10 @@ extern void logger(LogLevel level, const char *tag, const char *format, ...); //
 #include "fingerprint.h"
 #include "logger.h"
 #include "esp_now_manager.h"
+#include "gate_control.h"
+#include "sensors.h"
+#include "led_control.h"
+#include "config.h"
 
 #define LOG_BUFFER_SIZE 128
 
@@ -618,7 +631,12 @@ static const char *TAG = "MAIN";
 EventDispatcher eventDispatcher;
 NetworkManager wifiHandler;
 //UI ui;
-FingerprintHandler fingerprintHandler;
+HardwareSerial fingerprintSerial(1);
+FingerprintHandler fingerprintHandler(fingerprintSerial);
+GateControl gateControl(MOTOR_PIN1, MOTOR_PIN2, MOTOR_ENABLE);
+PIRSensor pirSensor(PIR_PIN);
+BreakBeamSensor breakBeamSensor(BREAK_BEAM_PIN);
+LEDControl ledControl(LED_STRIP_PIN);
 
 // Callback function prototypes
 void handleRecordStart(const Event &event);
@@ -644,13 +662,6 @@ void handleSendCaptureImageCommand(const Event &event);
 void setup() {
     Serial.begin(115200);
 
-    // Wait until Serial is ready
-    while (!Serial) {
-        delay(100);
-    }
-
-    LOG_I(TAG, "Serial ready!");
-
     Audio::begin();
     wifiHandler.begin(eventDispatcher);
 //    ui.begin(eventDispatcher);
@@ -670,12 +681,6 @@ void setup() {
     eventDispatcher.registerCallback(FINGERPRINT_NO_MATCH, &handleFingerprintNoMatch);
 
     eventDispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND, handleSendCaptureImageCommand);
-
-    // Testing sending capture image command
-    delay(3000);
-    StaticJsonDocument<1> emptyDoc;
-    NetworkManager::sendEvent("motion_detected", emptyDoc.as<JsonObject>());
-    ESPNow::sendCommand("capture_image");
 }
 
 void loop() {
@@ -700,8 +705,6 @@ void handlePlaybackStop(const Event &event) {
 }
 
 void handleWebSocketConnected(const Event &event) {
-    delay(1000);
-    LOG_I(TAG, "CC!");
     NetworkManager::sendInitMessage();
 }
 
@@ -728,348 +731,3 @@ void handleSendCaptureImageCommand(const Event &event) {
 }
 
 ########################################
-
-############# src\network_manager.cpp #############
-
-#include "network_manager.h"
-#include "config.h"
-#include "audio.h"
-#include <ArduinoJson.h>
-#include <WiFi.h>
-#include "logger.h"
-
-static const char *TAG = "NetworkManager";
-
-EventDispatcher *NetworkManager::eventDispatcher = nullptr;
-WebSocketsClient NetworkManager::webSocket;
-
-void NetworkManager::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    int connectionAttempts = 0;
-    while (WiFiClass::status() != WL_CONNECTED && connectionAttempts < 10) {
-        delay(500);
-        Serial.print(".");
-        connectionAttempts++;
-    }
-
-    if (WiFiClass::status() == WL_CONNECTED) {
-        LOG_I(TAG, "Connected to WiFi network");
-        eventDispatcher->dispatchEvent({WIFI_CONNECTED, ""});
-    } else {
-        LOG_E(TAG, "Failed to connect to WiFi network");
-        eventDispatcher->dispatchEvent({WIFI_DISCONNECTED, ""});
-        return;
-    }
-
-    webSocket.begin(WS_SERVER, WS_PORT);
-    webSocket.onEvent(webSocketEvent);
-
-    xTaskCreate([](void *param) {
-        while (true) {
-            NetworkManager::loop();
-            vTaskDelay(10);
-        }
-    }, "WiFi Task", 4096, this, 2, nullptr);
-}
-
-
-void NetworkManager::loop() {
-    webSocket.loop();
-}
-
-void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
-    StaticJsonDocument<200> doc;
-
-    switch (type) {
-        case WStype_DISCONNECTED:
-            LOG_I(TAG, "WebSocket disconnected");
-            eventDispatcher->dispatchEvent({WEBSOCKET_DISCONNECTED, ""});
-            // Handle WebSocket disconnection (e.g., reattempt connection)
-            break;
-        case WStype_CONNECTED:
-            LOG_I(TAG, "WebSocket connected");
-            eventDispatcher->dispatchEvent({WEBSOCKET_CONNECTED, ""});
-            break;
-        case WStype_TEXT: {
-
-            DeserializationError error = deserializeJson(doc, payload, length);
-
-            if (error) {
-                LOG_E(TAG, "Failed to parse JSON: %s", error.c_str());
-                return;
-            }
-
-            const char *event_type = doc["event_type"];
-            LOG_I(TAG, "Received event: %s", event_type);
-
-            if (strcmp(event_type, "start_recording") == 0) {
-                eventDispatcher->dispatchEvent({RECORD_START, "", 0});
-            } else if (strcmp(event_type, "stop_recording") == 0) {
-                eventDispatcher->dispatchEvent({RECORD_STOP, "", 0});
-            } else if (strcmp(event_type, "start_playing") == 0) {
-                eventDispatcher->dispatchEvent({PLAYBACK_START, "", 0});
-            } else if (strcmp(event_type, "stop_playing") == 0) {
-                eventDispatcher->dispatchEvent({PLAYBACK_STOP, "", 0});
-            }
-            break;
-        }
-        case WStype_BIN: {
-        }
-            Event event = {AUDIO_DATA_RECEIVED, std::string(reinterpret_cast<char *>(payload), length), length};
-            eventDispatcher->dispatchEvent(event);
-            break;
-    }
-}
-
-void NetworkManager::sendInitMessage() {
-    webSocket.sendTXT(R"({"event_type":"init","data":{"device":"esp_s3"}})");
-    LOG_I(TAG, "Sent init message");
-}
-
-void NetworkManager::sendAudioChunk(const uint8_t *data, size_t len) {
-    webSocket.sendBIN(data, len);
-    LOG_I(TAG, "Sent audio chunk");
-}
-
-void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
-    StaticJsonDocument<256> doc;
-    doc["event_type"] = eventType;
-    doc["data"] = data;
-
-    char buffer[256];
-    size_t length = serializeJson(doc, buffer);
-
-    webSocket.sendTXT(buffer, length);
-    LOG_I(TAG, "Sent event: %s", eventType);
-}
-
-###################################################
-
-############# src\network_manager.h #############
-
-#ifndef WIFI_H
-#define WIFI_H
-
-#include "WebSocketsClient.h"
-#include "events.h"
-#include <ArduinoJson.h>
-
-class NetworkManager {
-public:
-    void begin(EventDispatcher &dispatcher);
-
-    static void loop();
-
-    static void sendInitMessage();
-
-    static void sendAudioChunk(const uint8_t *data, size_t len);
-
-    static void sendEvent(const char *eventType, const JsonObject &data);
-
-private:
-    static void webSocketEvent(WStype_t type, uint8_t *payload, size_t length);
-
-    static EventDispatcher *eventDispatcher;
-    static WebSocketsClient webSocket;
-
-};
-
-#endif // WIFI_H
-
-#################################################
-
-############# src\ui.cpp #############
-
-#include "ui.h"
-#include "config.h"
-#include <Keypad.h>
-#include <Arduino.h>
-
-// Keypad configuration
-// Define keypad size
-const byte rows = 4; // Four rows
-const byte cols = 3; // Three columns
-
-// Define the key map
-char keys[rows][cols] = {
-        {'1', '2', '3',},
-        {'4', '5', '6',},
-        {'7', '8', '9',},
-        {'*', '0', '#',}
-};
-
-// Connect keypad rows and columns to Arduino pins
-byte rowPins[rows] = {12, 14, 27, 26};
-byte colPins[cols] = {2, 0, 4};
-
-UI::UI() : keypad(Keypad(makeKeymap(keys), rowPins, colPins, rows, cols)),
-           u8g2(U8G2_SSD1306_128X64_NONAME_F_HW_I2C(U8G2_R0, /* reset=*/U8X8_PIN_NONE)) {}
-
-void UI::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-
-    u8g2.begin();
-    displayMenu();
-
-    keypad.setDebounceTime(50); // Set debounce time (optional)
-
-    xTaskCreate(loopTask, "UI Task", 4096, this, 1, nullptr);
-}
-
-
-void UI::loopTask(void *parameter) {
-    while (true) {
-        ((UI *) parameter)->loop();
-        vTaskDelay(10);
-    }
-}
-
-void UI::loop() {
-    char key = keypad.getKey();
-    if (key) {
-        if (enteringPassword) {
-            if (key >= '0' && key <= '9') {
-                if (passwordIndex < 4) {
-                    enteredPassword[passwordIndex++] = key;
-                    displayMenu();
-                }
-            } else if (key == '*') {
-                // Clear entered password
-                passwordIndex = 0;
-                enteredPassword[0] = '\0';
-                displayMenu();
-            } else if (key == '#') {
-                // Exit password entry mode
-                enteringPassword = false;
-                passwordIndex = 0;
-                enteredPassword[0] = '\0';
-                displayMenu();
-            }
-        } else {
-            switch (key) {
-                case '2': // Up
-                    currentMenuItem = (currentMenuItem - 1 + 4) % 4;
-                    notificationDisplayed = false;
-                    displayMenu();
-                    break;
-                case '8': // Down
-                    currentMenuItem = (currentMenuItem + 1) % 4;
-                    notificationDisplayed = false;
-                    displayMenu();
-                    break;
-                case '5': // Select
-                    if (currentMenuItem == 0) {
-                        notificationDisplayed = true;
-                    } else if (currentMenuItem == 1) {
-                        enteringPassword = true;
-                    }
-                    displayMenu();
-                    break;
-            }
-        }
-    }
-}
-
-void UI::displayMenu() {
-    u8g2.clearBuffer();
-
-    if (notificationDisplayed && currentMenuItem == 0) {
-        u8g2.setFont(u8g2_font_profont17_tr);
-        u8g2.drawStr(15, 32, "OWNER HAS BEEN");
-        u8g2.drawStr(35, 47, "NOTIFIED");
-    } else if (enteringPassword && currentMenuItem == 1) {
-        u8g2.setFont(u8g2_font_profont17_tr);
-        u8g2.drawStr(35, 47, "ENTER PASSWORD: ");
-        u8g2.drawStr(110, 47, enteredPassword);
-    } else {
-        switch (currentMenuItem) {
-            case 0:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawStr(33, 25, "NOTIFY");
-                u8g2.drawStr(34, 40, "OWNER");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawXBMP(7, 19, 16, 16, image_notification_bell_bits);
-                u8g2.drawEllipse(120, 12, 1, 3);
-                break;
-            case 1:
-                u8g2.drawXBMP(5, 18, 13, 16, image_device_lock_bits);
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawStr(31, 26, "ENTER");
-                u8g2.drawStr(30, 41, "PASSWORD");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 21, 1, 3);
-                break;
-            case 2:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawStr(33, 25, "RECORD");
-                u8g2.drawStr(34, 40, "AUDIO");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawXBMP(9, 18, 15, 16, image_microphone_bits);
-                u8g2.drawEllipse(120, 34, 1, 3);
-                break;
-            case 3:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawStr(33, 20, "PLAY");
-                u8g2.drawStr(31, 36, "RECEIVED");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 48, 1, 3);
-                u8g2.drawXBMP(6, 20, 20, 16, image_volume_loud_bits);
-                u8g2.drawStr(31, 52, "AUDIO");
-                break;
-        }
-    }
-
-    u8g2.sendBuffer();
-}
-
-void UI::keypadEvent() {
-    // This function is required by the Keypad library but is unused in this context.
-}
-
-
-
-######################################
-
-############# src\ui.h #############
-
-#ifndef UI_H
-#define UI_H
-
-#include "U8g2lib.h"
-#include "Keypad.h"
-#include "events.h"
-
-
-class UI {
-public:
-    UI();
-
-    void begin(EventDispatcher &dispatcher);
-
-    void loop();
-
-private:
-    void displayMenu();
-
-    static void loopTask(void *parameter);
-
-    static void keypadEvent();
-
-    U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
-    Keypad keypad;
-    EventDispatcher *eventDispatcher{};
-
-    const char *menuItems[4] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY RECEIVED AUDIO"};
-    int currentMenuItem = 0;
-    bool notificationDisplayed = false;
-    bool enteringPassword = false;
-    char enteredPassword[5] = {0}; // Initialize with null terminator
-    int passwordIndex = 0;
-};
-
-#endif // UI_H
-
-####################################
-

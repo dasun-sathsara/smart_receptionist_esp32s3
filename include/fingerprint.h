@@ -6,13 +6,14 @@
 
 class FingerprintHandler {
 public:
-    FingerprintHandler();
+    FingerprintHandler(const HardwareSerial &serial);
 
     void begin(EventDispatcher &dispatcher);
 
 private:
     static void fingerprintTask(void *parameter);
 
+    HardwareSerial mySerial;
     Adafruit_Fingerprint fingerprint;
     EventDispatcher *eventDispatcher{};
 };

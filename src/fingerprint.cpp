@@ -4,12 +4,14 @@
 
 static const char *TAG = "FINGERPRINT";
 
-FingerprintHandler::FingerprintHandler() : fingerprint(Adafruit_Fingerprint(&Serial2)) {
-    Serial2.begin(FINGERPRINT_BAUDRATE_57600, SERIAL_8N1, FINGERPRINT_RX, FINGERPRINT_TX);
+FingerprintHandler::FingerprintHandler(const HardwareSerial &serial) : mySerial(serial), fingerprint(&mySerial) {
+    mySerial.begin(57600, SERIAL_8N1, FINGERPRINT_RX, FINGERPRINT_TX);
+    fingerprint.begin(57600);
 }
 
 void FingerprintHandler::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+
 
     if (fingerprint.verifyPassword()) {
         LOG_I(TAG, "Found fingerprint sensor!");
@@ -59,4 +61,7 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
         vTaskDelay(1000);
     }
 }
+
+
+
 
