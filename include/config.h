@@ -20,7 +20,7 @@
 #define PIR_PIN 21
 
 // Break beam sensor configuration
-#define BREAK_BEAM_PIN 4
+#define BREAK_BEAM_PIN 39
 
 // LED strip configuration
 #define LED_STRIP_PIN 38
@@ -39,7 +39,7 @@
 #define SAMPLE_RATE 44100
 #define BITS_PER_SAMPLE 16
 #define CHANNELS 1
-#define DMA_BUF_COUNT 8
+#define DMA_BUF_COUNT 16
 #define DMA_BUF_LEN 1024
 
 // Buffer sizes

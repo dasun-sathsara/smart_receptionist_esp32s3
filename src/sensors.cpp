@@ -41,7 +41,7 @@ BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin) {}
 
 void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pinMode(_pin, INPUT);
+    pinMode(_pin, INPUT_PULLUP);
     xTaskCreate(breakBeamTask, "Break Beam Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_BREAK_BEAM, "Break beam sensor initialized");
 }
