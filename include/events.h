@@ -23,7 +23,9 @@ enum EventType {
     SEND_CAPTURE_IMAGE_COMMAND,
     MOTION_DETECTED,
     BREAK_BEAM_TRIGGERED,
-    CHANGE_STATE
+    CHANGE_STATE,
+    GATE_OPENED,
+    GATE_CLOSED,
 };
 
 struct Event {
@@ -36,7 +38,7 @@ using EventCallback = std::function<void(const Event &)>;
 
 class EventDispatcher {
 public:
-    void registerCallback(EventType type, EventCallback callback);
+    void registerCallback(EventType type, const EventCallback& callback);
 
     void dispatchEvent(const Event &event);
 

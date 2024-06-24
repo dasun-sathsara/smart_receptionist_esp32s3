@@ -21,8 +21,7 @@ void PIRSensor::begin(EventDispatcher &dispatcher) {
 
 void PIRSensor::pirTask(void *parameter) {
     auto *pirSensor = static_cast<PIRSensor *>(parameter);
-    TickType_t
-    cooldownTime = pdMS_TO_TICKS(60000); // 1 minute cooldown
+    TickType_t cooldownTime = pdMS_TO_TICKS(60000); // 1 minute cooldown
 
     while (true) {
         if (digitalRead(pirSensor->_pin) == HIGH && !cooldownActive) {
@@ -42,7 +41,7 @@ BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin) {}
 
 void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pinMode(_pin, INPUT_PULLUP);
+    pinMode(_pin, INPUT);
     xTaskCreate(breakBeamTask, "Break Beam Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_BREAK_BEAM, "Break beam sensor initialized");
 }

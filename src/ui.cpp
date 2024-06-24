@@ -4,6 +4,19 @@
 
 static const char *TAG = "UI";
 
+// Define keypad size
+const byte ROWS = 4;
+const byte COLS = 4;
+
+char hexaKeys[ROWS][COLS] = {
+        {'0', '1', '2', '3'},
+        {'4', '5', '6', '7'},
+        {'8', '9', 'A', 'B'},
+        {'C', 'D', 'E', 'F'}
+};
+byte rowPins[ROWS] = {3, 2, 1, 0};
+byte colPins[COLS] = {7, 6, 5, 4};
+
 const char *UI::menuItems[] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY RECEIVED AUDIO"};
 const int UI::menuItemCount = sizeof(menuItems) / sizeof(menuItems[0]);
 const char UI::correctPassword[] = "1234";

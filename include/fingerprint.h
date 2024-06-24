@@ -6,7 +6,7 @@
 
 class FingerprintHandler {
 public:
-    FingerprintHandler(const HardwareSerial &serial);
+    explicit FingerprintHandler(const HardwareSerial &serial);
 
     void begin(EventDispatcher &dispatcher);
 

@@ -1,6 +1,6 @@
 #include "events.h"
 
-void EventDispatcher::registerCallback(EventType type, EventCallback callback) {
+void EventDispatcher::registerCallback(EventType type, const EventCallback& callback) {
     callbacks[type].push_back(callback);
 }
 

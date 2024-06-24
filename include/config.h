@@ -12,18 +12,18 @@
 #define WS_PORT 8765
 
 // L298N motor driver configuration
-#define MOTOR_PIN1 26
-#define MOTOR_PIN2 27
-#define MOTOR_ENABLE 14
+#define MOTOR_PIN1 8
+#define MOTOR_PIN2 9
+#define MOTOR_ENABLE 10
 
 // PIR sensor configuration
-#define PIR_PIN 25
+#define PIR_PIN 21
 
 // Break beam sensor configuration
-#define BREAK_BEAM_PIN 33
+#define BREAK_BEAM_PIN 4
 
 // LED strip configuration
-#define LED_STRIP_PIN 32
+#define LED_STRIP_PIN 38
 
 
 // I2S configuration
@@ -43,7 +43,7 @@
 #define DMA_BUF_LEN 1024
 
 // Buffer sizes
-#define I2S_BUFFER_SIZE (1024 * 8) // Adjust as needed
+#define I2S_BUFFER_SIZE (1024 * 8)
 
 // Fingerprint sensor configuration
 #define FINGERPRINT_TX 17
@@ -72,18 +72,5 @@ static const unsigned char image_volume_loud_bits[]
                         0x10,
                         0x42, 0x04, 0x20, 0x22, 0x02, 0x40, 0x02, 0x01, 0x80, 0x83, 0x00, 0x00, 0x00, 0x00};
 
-
-// Define keypad size
-const byte ROWS = 4;
-const byte COLS = 4;
-
-char hexaKeys[ROWS][COLS] = {
-        {'0', '1', '2', '3'},
-        {'4', '5', '6', '7'},
-        {'8', '9', 'A', 'B'},
-        {'C', 'D', 'E', 'F'}
-};
-byte rowPins[ROWS] = {3, 2, 1, 0};
-byte colPins[COLS] = {7, 6, 5, 4};
 
 #endif // CONFIG_H

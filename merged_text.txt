@@ -62,18 +62,18 @@ private:
 #define WS_PORT 8765
 
 // L298N motor driver configuration
-#define MOTOR_PIN1 26
-#define MOTOR_PIN2 27
-#define MOTOR_ENABLE 14
+#define MOTOR_PIN1 8
+#define MOTOR_PIN2 9
+#define MOTOR_ENABLE 10
 
 // PIR sensor configuration
-#define PIR_PIN 25
+#define PIR_PIN 21
 
 // Break beam sensor configuration
 #define BREAK_BEAM_PIN 33
 
 // LED strip configuration
-#define LED_STRIP_PIN 32
+#define LED_STRIP_PIN 38
 
 
 // I2S configuration
@@ -121,6 +121,7 @@ static const unsigned char image_volume_loud_bits[]
                         0x08, 0x01, 0x22, 0x09, 0x01, 0x22, 0x09, 0x01, 0x22, 0x09, 0x01, 0x92, 0x08, 0x0f, 0x8a, 0x04,
                         0x10,
                         0x42, 0x04, 0x20, 0x22, 0x02, 0x40, 0x02, 0x01, 0x80, 0x83, 0x00, 0x00, 0x00, 0x00};
+
 
 #endif // CONFIG_H
 
@@ -185,7 +186,9 @@ enum EventType {
     SEND_CAPTURE_IMAGE_COMMAND,
     MOTION_DETECTED,
     BREAK_BEAM_TRIGGERED,
-    CHANGE_STATE
+    CHANGE_STATE,
+    GATE_OPENED,
+    GATE_CLOSED,
 };
 
 struct Event {
@@ -198,7 +201,7 @@ using EventCallback = std::function<void(const Event &)>;
 
 class EventDispatcher {
 public:
-    void registerCallback(EventType type, EventCallback callback);
+    void registerCallback(EventType type, const EventCallback& callback);
 
     void dispatchEvent(const Event &event);
 
@@ -220,7 +223,7 @@ private:
 
 class FingerprintHandler {
 public:
-    FingerprintHandler(const HardwareSerial &serial);
+    explicit FingerprintHandler(const HardwareSerial &serial);
 
     void begin(EventDispatcher &dispatcher);
 
@@ -256,12 +259,10 @@ public:
 
     bool isGateMoving() const;
 
-    bool isGateOpen() const;
-
+    static bool isGateOpen(); // Make non-const
 
 private:
     static void gateControlTask(void *parameter);
-
 
     int _motorPin1;
     int _motorPin2;
@@ -273,7 +274,8 @@ private:
 
     static EventDispatcher *eventDispatcher;
 
-
+    // Use a mutex to protect _isGateOpen
+    static SemaphoreHandle_t _gateStateMutex;
 };
 
 #endif // GATE_CONTROL_H
@@ -291,7 +293,7 @@ private:
 
 class LEDControl {
 public:
-    LEDControl(int pin);
+    explicit LEDControl(int pin);
 
     void begin(EventDispatcher &dispatcher);
 
@@ -382,7 +384,7 @@ private:
 
 class PIRSensor {
 public:
-    PIRSensor(int pin);
+    explicit PIRSensor(int pin);
     void begin(EventDispatcher &dispatcher);
 
 private:
@@ -394,7 +396,7 @@ private:
 
 class BreakBeamSensor {
 public:
-    BreakBeamSensor(int pin);
+    explicit BreakBeamSensor(int pin);
     void begin(EventDispatcher &dispatcher);
 
 private:
@@ -407,14 +409,304 @@ private:
 
 #############################################
 
+############# include\ui.h #############
+
+#ifndef UI_H
+#define UI_H
+
+#include <U8g2lib.h>
+#include <Keypad.h>
+#include "events.h"
+
+class UI {
+public:
+    UI();
+
+    void begin(EventDispatcher &dispatcher);
+
+    void update();
+
+private:
+    static void uiTask(void *parameter);
+
+    void displayMenu();
+
+    void handleKeyPress(char key);
+
+    void displayPasswordResult(bool correct);
+
+    void displayRecordingMessage();
+
+    void displayPlayingMessage();
+
+    U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
+    Keypad keypad;
+
+    static const char *menuItems[];
+    static const int menuItemCount;
+    int currentMenuItem;
+    bool notificationDisplayed;
+    bool enteringPassword;
+    bool passwordCorrect;
+    bool passwordChecked;
+    bool recordingAudio;
+    bool playingAudio;
+    char enteredPassword[5]{};
+    int passwordIndex;
+    static const char correctPassword[];
+
+    static EventDispatcher *eventDispatcher;
+};
+
+#endif // UI_H
+
 ########################################
 
+############# src\audio.cpp #############
+
+#include "audio.h"
+#include "config.h"
+#include "network_manager.h"
+#include <esp_log.h>
+
+static const char *TAG = "AUDIO";
+
+const i2s_config_t Audio::i2sConfigRx = {
+        .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_RX),
+        .sample_rate = SAMPLE_RATE,
+        .bits_per_sample = (i2s_bits_per_sample_t) BITS_PER_SAMPLE,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = (i2s_comm_format_t) (I2S_COMM_FORMAT_STAND_I2S),
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = DMA_BUF_COUNT,
+        .dma_buf_len = DMA_BUF_LEN,
+        .use_apll = false,
+        .tx_desc_auto_clear = true,
+        .fixed_mclk = 0
+};
+
+const i2s_pin_config_t Audio::i2sPinConfigRx = {
+        .bck_io_num = I2S_PIN_INMP441_SCK,
+        .ws_io_num = I2S_PIN_INMP441_WS,
+        .data_out_num = I2S_PIN_NO_CHANGE,
+        .data_in_num = I2S_PIN_INMP441_SD
+};
+
+const i2s_config_t Audio::i2sConfigTx = {
+        .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_TX),
+        .sample_rate = SAMPLE_RATE,
+        .bits_per_sample = (i2s_bits_per_sample_t) BITS_PER_SAMPLE,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = (i2s_comm_format_t) (I2S_COMM_FORMAT_STAND_I2S),
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = DMA_BUF_COUNT,
+        .dma_buf_len = DMA_BUF_LEN,
+        .use_apll = false
+};
+
+const i2s_pin_config_t Audio::i2sPinConfigTx = {
+        .bck_io_num = I2S_PIN_BCLK,
+        .ws_io_num = I2S_PIN_LRCK,
+        .data_out_num = I2S_PIN_DATA,
+        .data_in_num = I2S_PIN_NO_CHANGE
+};
+
+SemaphoreHandle_t Audio::i2sBufferMutex = nullptr;
+uint8_t *Audio::i2sBuffer = nullptr;
+size_t Audio::i2sBufferSize = I2S_BUFFER_SIZE;
+volatile size_t Audio::i2sBufferHead = 0;
+volatile size_t Audio::i2sBufferTail = 0;
+TaskHandle_t Audio::i2sReaderTaskHandle = nullptr;
+TaskHandle_t Audio::i2sWriterTaskHandle = nullptr;
+
+void Audio::begin() {
+    i2sBufferMutex = xSemaphoreCreateMutex();
+
+    // Allocate memory for the I2S buffer dynamically
+    i2sBuffer = (uint8_t *) malloc(i2sBufferSize * sizeof(uint8_t));
+
+    if (i2sBuffer == nullptr) {
+        ESP_LOGE(TAG, "Error allocating memory for I2S buffer!");
+    }
+
+    // Initialize I2S RX
+    if (i2s_driver_install(I2S_NUM_1, &i2sConfigRx, 0, nullptr) != ESP_OK) {
+        ESP_LOGE(TAG, "Error installing I2S RX driver!");
+    }
+
+    i2s_set_pin(I2S_NUM_1, &i2sPinConfigRx);
+    i2s_zero_dma_buffer(I2S_NUM_1);
+
+    // Initialize I2S TX
+    if (i2s_driver_install(I2S_NUM_0, &i2sConfigTx, 0, nullptr) != ESP_OK) {
+        ESP_LOGE(TAG, "Error installing I2S TX driver!");
+    }
+    i2s_set_pin(I2S_NUM_0, &i2sPinConfigTx);
+    i2s_zero_dma_buffer(I2S_NUM_0);
+
+    xTaskCreatePinnedToCore(i2sReaderTask, "I2S Reader Task", 8192, nullptr, 2, &i2sReaderTaskHandle, 1);
+    xTaskCreatePinnedToCore(i2sWriterTask, "I2S Writer Task", 8192, nullptr, 3, &i2sWriterTaskHandle, 1);
+
+    vTaskSuspend(i2sReaderTaskHandle); // Initially suspend the reader task
+    vTaskSuspend(i2sWriterTaskHandle); // Initially suspend the writer task
+}
+
+void Audio::startRecording() {
+    vTaskResume(i2sReaderTaskHandle);
+    ESP_LOGI(TAG, "Recording started");
+}
+
+void Audio::stopRecording() {
+    vTaskSuspend(i2sReaderTaskHandle);
+    ESP_LOGI(TAG, "Recording stopped");
+}
+
+void Audio::startPlayback() {
+    vTaskResume(i2sWriterTaskHandle);
+    ESP_LOGI(TAG, "Playback started");
+}
+
+void Audio::stopPlayback() {
+    vTaskSuspend(i2sWriterTaskHandle);
+    ESP_LOGI(TAG, "Playback stopped");
+
+    // Clear the I2S DMA buffer
+    i2s_zero_dma_buffer(I2S_NUM_0);
+
+    // Clear the buffer when playback stops
+    if (xSemaphoreTake(i2sBufferMutex, portMAX_DELAY) == pdTRUE) {
+        i2sBufferHead = 0;
+        i2sBufferTail = 0;
+        xSemaphoreGive(i2sBufferMutex);
+    }
+}
+
+void Audio::addDataToBuffer(const uint8_t *data, size_t length) {
+    if (xSemaphoreTake(i2sBufferMutex, portMAX_DELAY) == pdTRUE) {
+        for (size_t i = 0; i < length; i++) {
+            i2sBuffer[i2sBufferHead] = data[i];
+            i2sBufferHead = (i2sBufferHead + 1) % I2S_BUFFER_SIZE;
+            if (i2sBufferHead == i2sBufferTail) // Buffer overflow, discard oldest data
+            {
+                i2sBufferTail = (i2sBufferTail + 1) % I2S_BUFFER_SIZE;
+            }
+        }
+        xSemaphoreGive(i2sBufferMutex);
+    }
+}
+
+[[noreturn]] void Audio::i2sReaderTask(void *parameter) {
+    size_t bytesRead = 0;
+
+    // Dynamically allocate i2SMicBuffer
+    auto *i2SMicBuffer = new uint8_t[DMA_BUF_LEN * 2];
+    auto *prependedBuffer = new uint8_t[DMA_BUF_LEN * 2 + 6];
+
+    while (true) {
+        i2s_read(I2S_NUM_1, i2SMicBuffer, DMA_BUF_LEN * 2, &bytesRead, portMAX_DELAY); // Read from Microphone
+        if (bytesRead > 0) {
+            memcpy(prependedBuffer, "AUDIO:", 6);
+            memcpy(prependedBuffer + 6, i2SMicBuffer, bytesRead);
+
+            NetworkManager::sendAudioChunk(prependedBuffer, bytesRead + 6);
+
+
+//            Event event = {AUDIO_CHUNK_READ, std::string(reinterpret_cast<char *>(prependedBuffer)),
+//                           bytesRead + 6};
+//            eventDispatcher->dispatchEvent(event);
+        }
+
+    }
+
+    // Free allocated memory
+    delete[] i2SMicBuffer;
+    delete[] prependedBuffer;
+}
+
+[[noreturn]] void Audio::i2sWriterTask(void *parameter) {
+    size_t bytesWritten = 0;
+    for (;;) {
+        if (xSemaphoreTake(i2sBufferMutex, portMAX_DELAY) == pdTRUE) {
+            if (i2sBufferTail != i2sBufferHead) {
+                size_t bytesToWrite = (i2sBufferTail < i2sBufferHead) ? (i2sBufferHead - i2sBufferTail) : (
+                        I2S_BUFFER_SIZE - i2sBufferTail);
+                i2s_write(I2S_NUM_0, &i2sBuffer[i2sBufferTail], bytesToWrite, &bytesWritten, portMAX_DELAY);
+                i2sBufferTail = (i2sBufferTail + bytesWritten) % I2S_BUFFER_SIZE;
+            }
+            xSemaphoreGive(i2sBufferMutex);
+        }
+        vTaskDelay(10);
+    }
+}
+
+#########################################
+
+############# src\esp_now_manager.cpp #############
+
+#include "esp_now_manager.h"
+#include "logger.h"
+
+static const char *TAG = "ESPNow";
+
+EventDispatcher *ESPNow::eventDispatcher = nullptr;
+esp_now_peer_info_t ESPNow::peerInfo;
+
+const uint8_t ESPNow::broadcastAddress[] = {0x34, 0x98, 0x7A, 0xB6, 0x8E, 0x88};
+
+void ESPNow::begin(EventDispatcher &dispatcher) {
+    eventDispatcher = &dispatcher;
+
+    if (esp_now_init() != ESP_OK) {
+        LOG_E(TAG, "Error initializing ESP-NOW");
+        return;
+    }
+
+    esp_now_register_recv_cb(onDataReceived);
+    esp_now_register_send_cb(onDataSent);
+
+    memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+    peerInfo.channel = ESPNOW_CHANNEL;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        LOG_E(TAG, "Failed to add peer");
+        return;
+    }
+
+    LOG_I(TAG, "ESP-NOW initialized successfully");
+}
+
+void ESPNow::sendCommand(const char *command) {
+    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) command, strlen(command));
+    if (result != ESP_OK) {
+        LOG_E(TAG, "Failed to send data: %d", result);
+    } else {
+        LOG_I(TAG, "Command sent successfully: %s", command);
+    }
+}
+
+void ESPNow::onDataReceived(const uint8_t *mac, const uint8_t *data, int len) {
+    char *receivedData = (char *) malloc(len + 1);
+    memcpy(receivedData, data, len);
+    receivedData[len] = '\0';
+
+    LOG_I(TAG, "Received data: %s", receivedData);
+    eventDispatcher->dispatchEvent({ESPNOW_DATA_RECEIVED, std::string(receivedData), static_cast<size_t>(len)});
+
+    free(receivedData);
+}
+
+void ESPNow::onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+    LOG_I(TAG, "Last Packet Send Status: %s", status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+}
+
+###################################################
 
 ############# src\events.cpp #############
 
 #include "events.h"
 
-void EventDispatcher::registerCallback(EventType type, EventCallback callback) {
+void EventDispatcher::registerCallback(EventType type, const EventCallback& callback) {
     callbacks[type].push_back(callback);
 }
 
@@ -507,10 +799,11 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 static const char *TAG = "GATE_CONTROL";
 
 EventDispatcher *GateControl::eventDispatcher = nullptr;
+volatile bool GateControl::_isGateOpen = false;
+SemaphoreHandle_t GateControl::_gateStateMutex = xSemaphoreCreateMutex(); // Initialize the mutex
 
 GateControl::GateControl(int motorPin1, int motorPin2, int enablePin)
-        : _motorPin1(motorPin1), _motorPin2(motorPin2), _enablePin(enablePin) {
-}
+        : _motorPin1(motorPin1), _motorPin2(motorPin2), _enablePin(enablePin) {}
 
 void GateControl::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
@@ -524,68 +817,110 @@ void GateControl::begin(EventDispatcher &dispatcher) {
 }
 
 void GateControl::openGate() {
-    // Check if the gate is already open or in motion
-    if (isGateOpen() || isGateMoving()) {
-        LOG_I(TAG, "Gate is already open or in motion.");
-        return;
-    } else {
-        digitalWrite(_motorPin1, HIGH);
-        digitalWrite(_motorPin2, LOW);
-        digitalWrite(_enablePin, HIGH);
-        _movementStartTime = millis();
-        _isMoving = true;
-        LOG_I(TAG, "Gate opening started...");
+    if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
+        if (!_isGateOpen && !_isMoving) { // Check if gate is closed and not moving
+            digitalWrite(_motorPin1, HIGH);
+            digitalWrite(_motorPin2, LOW);
+            digitalWrite(_enablePin, HIGH);
+            _movementStartTime = millis();
+            _isMoving = true;
+            LOG_I(TAG, "Gate opening started...");
+        } else {
+            LOG_I(TAG, "Gate is already open or in motion.");
+        }
+        xSemaphoreGive(_gateStateMutex);
     }
 }
 
 void GateControl::closeGate() {
-    // Check if the gate is already closed or in motion
-    if (!isGateOpen() || isGateMoving()) {
-        LOG_I(TAG, "Gate is already closed or in motion.");
-        return;
-    } else {
-        digitalWrite(_motorPin1, LOW);
-        digitalWrite(_motorPin2, HIGH);
-        digitalWrite(_enablePin, HIGH);
-        _movementStartTime = millis();
-        _isMoving = true;
-        LOG_I(TAG, "Gate closing started...");
+    if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
+        if (_isGateOpen && !_isMoving) { // Check if gate is open and not moving
+            digitalWrite(_motorPin1, LOW);
+            digitalWrite(_motorPin2, HIGH);
+            digitalWrite(_enablePin, HIGH);
+            _movementStartTime = millis();
+            _isMoving = true;
+            LOG_I(TAG, "Gate closing started...");
+        } else {
+            LOG_I(TAG, "Gate is already closed or in motion.");
+        }
+        xSemaphoreGive(_gateStateMutex);
     }
-
 }
 
 bool GateControl::isGateMoving() const {
     return _isMoving;
 }
 
-bool GateControl::isGateOpen() const {
-    return _isGateOpen;
+// Make isGateOpen() non-const and protect with mutex
+bool GateControl::isGateOpen() {
+    if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
+        bool gateState = _isGateOpen;
+        xSemaphoreGive(_gateStateMutex);
+        return gateState;
+    } else {
+        // Handle mutex failure (e.g., return a default value)
+        return false;
+    }
 }
-
 
 void GateControl::gateControlTask(void *parameter) {
     auto *gateControl = static_cast<GateControl *>(parameter);
 
     while (true) {
         if (gateControl->isGateMoving() && millis() - gateControl->_movementStartTime > 7000) {
-            // Stop the motor
             digitalWrite(gateControl->_enablePin, LOW);
             gateControl->_isMoving = false;
 
-            if (gateControl->isGateOpen()) {
-                // Gate is open
-                _isGateOpen = true;
-            } else {
-                // Gate is closed
-                _isGateOpen = false;
+            // Update _isGateOpen within the mutex
+            if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
+                _isGateOpen = !_isGateOpen; // Toggle the state
+                xSemaphoreGive(_gateStateMutex);
+            }
 
+            // Dispatch events after updating _isGateOpen
+            if (_isGateOpen) {
+                eventDispatcher->dispatchEvent({GATE_OPENED, ""});
+            } else {
+                eventDispatcher->dispatchEvent({GATE_CLOSED, ""});
             }
         }
-
-        vTaskDelay(pdMS_TO_TICKS(100)); // Check every 100ms
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
+
+################################################
+
+############# src\led_control.cpp #############
+
+#include "led_control.h"
+#include "logger.h"
+
+static const char *TAG = "LED_CONTROL";
+
+EventDispatcher *LEDControl::eventDispatcher = nullptr;
+
+LEDControl::LEDControl(int pin) : _pin(pin) {}
+
+void LEDControl::begin(EventDispatcher &dispatcher) {
+    eventDispatcher = &dispatcher;
+    pinMode(_pin, OUTPUT);
+    digitalWrite(_pin, LOW);
+    LOG_I(TAG, "LED control initialized");
+}
+
+void LEDControl::turnOn() {
+    digitalWrite(_pin, HIGH);
+    LOG_I(TAG, "LED turned on");
+}
+
+void LEDControl::turnOff() {
+    digitalWrite(_pin, LOW);
+    LOG_I(TAG, "LED turned off");
+}
+
+###############################################
 
 ############# src\main.cpp #############
 
@@ -630,7 +965,7 @@ static const char *TAG = "MAIN";
 
 EventDispatcher eventDispatcher;
 NetworkManager wifiHandler;
-//UI ui;
+UI ui;
 HardwareSerial fingerprintSerial(1);
 FingerprintHandler fingerprintHandler(fingerprintSerial);
 GateControl gateControl(MOTOR_PIN1, MOTOR_PIN2, MOTOR_ENABLE);
@@ -659,13 +994,19 @@ void handleFingerprintNoMatch(const Event &event);
 
 void handleSendCaptureImageCommand(const Event &event);
 
+void handleChangeState(const Event &event);
+
 void setup() {
     Serial.begin(115200);
 
     Audio::begin();
     wifiHandler.begin(eventDispatcher);
-//    ui.begin(eventDispatcher);
+    ui.begin(eventDispatcher);
     fingerprintHandler.begin(eventDispatcher);
+    gateControl.begin(eventDispatcher);
+    pirSensor.begin(eventDispatcher);
+    breakBeamSensor.begin(eventDispatcher);
+    ledControl.begin(eventDispatcher);
 
     ESPNow::begin(eventDispatcher);
 
@@ -679,55 +1020,467 @@ void setup() {
     eventDispatcher.registerCallback(AUDIO_CHUNK_READ, &handleAudioChunkRead);
     eventDispatcher.registerCallback(FINGERPRINT_MATCH, &handleFingerprintMatch);
     eventDispatcher.registerCallback(FINGERPRINT_NO_MATCH, &handleFingerprintNoMatch);
+    eventDispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND, &handleSendCaptureImageCommand);
+    eventDispatcher.registerCallback(CHANGE_STATE, &handleChangeState);
 
-    eventDispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND, handleSendCaptureImageCommand);
+    LOG_I(TAG, "System initialization complete");
 }
 
 void loop() {
     // No need to implement loop as FreeRTOS tasks are handling the logic
 }
 
-
 void handleRecordStart(const Event &event) {
     Audio::startRecording();
+    LOG_I(TAG, "Recording started");
 }
 
 void handleRecordStop(const Event &event) {
     Audio::stopRecording();
+    LOG_I(TAG, "Recording stopped");
 }
 
 void handlePlaybackStart(const Event &event) {
     Audio::startPlayback();
+    LOG_I(TAG, "Playback started");
 }
 
 void handlePlaybackStop(const Event &event) {
     Audio::stopPlayback();
+    LOG_I(TAG, "Playback stopped");
 }
 
 void handleWebSocketConnected(const Event &event) {
     NetworkManager::sendInitMessage();
+    LOG_I(TAG, "WebSocket connected, init message sent");
 }
 
 void handleAudioDataReceived(const Event &event) {
     Audio::addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    LOG_D(TAG, "Audio data received and added to buffer");
 }
 
 void handleAudioChunkRead(const Event &event) {
     NetworkManager::sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    LOG_D(TAG, "Audio chunk read and sent");
 }
 
 void handleFingerprintMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint match found!");
-    // TODO: Implement
+//    gateControl.openGate();
+//    ledControl.turnOn();
 }
 
 void handleFingerprintNoMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint no match found!");
-    // TODO: Implement
+//    ledControl.turnOff();
 }
 
 void handleSendCaptureImageCommand(const Event &event) {
     ESPNow::sendCommand("capture_image");
+    LOG_I(TAG, "Capture image command sent");
+}
+
+void handleChangeState(const Event &event) {
+    if (event.data == "OPEN") {
+        gateControl.openGate();
+        ledControl.turnOn();
+        LOG_I(TAG, "Gate opened and LED turned on");
+    } else if (event.data == "CLOSE") {
+        gateControl.closeGate();
+        ledControl.turnOff();
+        LOG_I(TAG, "Gate closed and LED turned off");
+    }
 }
 
 ########################################
+
+############# src\network_manager.cpp #############
+
+#include "network_manager.h"
+#include "config.h"
+#include "audio.h"
+#include <ArduinoJson.h>
+#include <WiFi.h>
+#include "logger.h"
+
+static const char *TAG = "NetworkManager";
+
+EventDispatcher *NetworkManager::eventDispatcher = nullptr;
+WebSocketsClient NetworkManager::webSocket;
+
+void NetworkManager::begin(EventDispatcher &dispatcher) {
+    eventDispatcher = &dispatcher;
+
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    int connectionAttempts = 0;
+    while (WiFiClass::status() != WL_CONNECTED && connectionAttempts < 10) {
+        delay(500);
+        connectionAttempts++;
+    }
+
+    if (WiFiClass::status() == WL_CONNECTED) {
+        LOG_I(TAG, "Connected to WiFi network");
+        eventDispatcher->dispatchEvent({WIFI_CONNECTED, ""});
+    } else {
+        LOG_E(TAG, "Failed to connect to WiFi network");
+        eventDispatcher->dispatchEvent({WIFI_DISCONNECTED, ""});
+        return;
+    }
+
+    webSocket.begin(WS_SERVER, WS_PORT);
+    webSocket.onEvent(webSocketEvent);
+
+    xTaskCreate([](void *param) {
+        while (true) {
+            NetworkManager::loop();
+            vTaskDelay(10);
+        }
+    }, "WiFi Task", 4096, this, 2, nullptr);
+}
+
+
+void NetworkManager::loop() {
+    webSocket.loop();
+}
+
+void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
+    StaticJsonDocument<200> doc;
+
+    switch (type) {
+        case WStype_DISCONNECTED:
+            LOG_I(TAG, "WebSocket disconnected");
+            eventDispatcher->dispatchEvent({WEBSOCKET_DISCONNECTED, ""});
+            // Handle WebSocket disconnection (e.g., reattempt connection)
+            break;
+        case WStype_CONNECTED:
+            LOG_I(TAG, "WebSocket connected");
+            eventDispatcher->dispatchEvent({WEBSOCKET_CONNECTED, ""});
+            break;
+        case WStype_TEXT: {
+
+            DeserializationError error = deserializeJson(doc, payload, length);
+
+            if (error) {
+                LOG_E(TAG, "Failed to parse JSON: %s", error.c_str());
+                return;
+            }
+
+            const char *event_type = doc["event_type"];
+            LOG_I(TAG, "Received event: %s", event_type);
+
+            if (strcmp(event_type, "start_recording") == 0) {
+                eventDispatcher->dispatchEvent({RECORD_START, "", 0});
+            } else if (strcmp(event_type, "stop_recording") == 0) {
+                eventDispatcher->dispatchEvent({RECORD_STOP, "", 0});
+            } else if (strcmp(event_type, "start_playing") == 0) {
+                eventDispatcher->dispatchEvent({PLAYBACK_START, "", 0});
+            } else if (strcmp(event_type, "stop_playing") == 0) {
+                eventDispatcher->dispatchEvent({PLAYBACK_STOP, "", 0});
+            }
+            break;
+        }
+        case WStype_BIN: {
+        }
+            Event event = {AUDIO_DATA_RECEIVED, std::string(reinterpret_cast<char *>(payload), length), length};
+            eventDispatcher->dispatchEvent(event);
+            break;
+    }
+}
+
+void NetworkManager::sendInitMessage() {
+    LOG_I(TAG, "Sent init message");
+    webSocket.sendTXT(R"({"event_type":"init","data":{"device":"esp_s3"}})");
+}
+
+void NetworkManager::sendAudioChunk(const uint8_t *data, size_t len) {
+    webSocket.sendBIN(data, len);
+    LOG_I(TAG, "Sent audio chunk");
+}
+
+void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
+    StaticJsonDocument<256> doc;
+    doc["event_type"] = eventType;
+    doc["data"] = data;
+
+    char buffer[256];
+    size_t length = serializeJson(doc, buffer);
+
+    webSocket.sendTXT(buffer, length);
+    LOG_I(TAG, "Sent event: %s", eventType);
+}
+
+###################################################
+
+############# src\sensors.cpp #############
+
+#include "sensors.h"
+#include "logger.h"
+#include "network_manager.h"
+
+static const char *TAG_PIR = "PIR_SENSOR";
+static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
+
+EventDispatcher *PIRSensor::eventDispatcher = nullptr;
+volatile bool PIRSensor::cooldownActive = false;
+
+EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
+
+PIRSensor::PIRSensor(int pin) : _pin(pin) {}
+
+void PIRSensor::begin(EventDispatcher &dispatcher) {
+    eventDispatcher = &dispatcher;
+    pinMode(_pin, INPUT);
+    xTaskCreate(pirTask, "PIR Sensor Task", 2048, this, 1, nullptr);
+    LOG_I(TAG_PIR, "PIR sensor initialized");
+}
+
+void PIRSensor::pirTask(void *parameter) {
+    auto *pirSensor = static_cast<PIRSensor *>(parameter);
+    TickType_t
+    cooldownTime = pdMS_TO_TICKS(60000); // 1 minute cooldown
+
+    while (true) {
+        if (digitalRead(pirSensor->_pin) == HIGH && !cooldownActive) {
+            LOG_I(TAG_PIR, "Motion detected");
+            StaticJsonDocument<1> emptyDoc;
+            NetworkManager::sendEvent("motion_detected", emptyDoc.as<JsonObject>());
+
+            cooldownActive = true;
+            vTaskDelay(cooldownTime);
+            cooldownActive = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin) {}
+
+void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
+    eventDispatcher = &dispatcher;
+    pinMode(_pin, INPUT_PULLUP);
+    xTaskCreate(breakBeamTask, "Break Beam Sensor Task", 2048, this, 1, nullptr);
+    LOG_I(TAG_BREAK_BEAM, "Break beam sensor initialized");
+}
+
+void BreakBeamSensor::breakBeamTask(void *parameter) {
+    auto *breakBeamSensor = static_cast<BreakBeamSensor *>(parameter);
+    bool lastState = digitalRead(breakBeamSensor->_pin);
+
+    while (true) {
+        bool currentState = digitalRead(breakBeamSensor->_pin);
+        if (currentState != lastState) {
+            if (currentState == LOW) {
+                LOG_I(TAG_BREAK_BEAM, "Break beam triggered");
+                eventDispatcher->dispatchEvent({BREAK_BEAM_TRIGGERED, ""});
+            }
+            lastState = currentState;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+###########################################
+
+############# src\ui.cpp #############
+
+#include "ui.h"
+#include "config.h"
+#include "logger.h"
+
+static const char *TAG = "UI";
+
+// Define keypad size
+const byte ROWS = 4;
+const byte COLS = 4;
+
+char hexaKeys[ROWS][COLS] = {
+        {'0', '1', '2', '3'},
+        {'4', '5', '6', '7'},
+        {'8', '9', 'A', 'B'},
+        {'C', 'D', 'E', 'F'}
+};
+byte rowPins[ROWS] = {3, 2, 1, 0};
+byte colPins[COLS] = {7, 6, 5, 4};
+
+const char *UI::menuItems[] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY RECEIVED AUDIO"};
+const int UI::menuItemCount = sizeof(menuItems) / sizeof(menuItems[0]);
+const char UI::correctPassword[] = "1234";
+
+EventDispatcher *UI::eventDispatcher = nullptr;
+
+UI::UI() : u8g2(U8G2_R0, U8X8_PIN_NONE),
+           keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS),
+           currentMenuItem(0),
+           notificationDisplayed(false),
+           enteringPassword(false),
+           passwordCorrect(false),
+           passwordChecked(false),
+           recordingAudio(false),
+           playingAudio(false),
+           passwordIndex(0) {
+    memset(enteredPassword, 0, sizeof(enteredPassword));
+}
+
+void UI::begin(EventDispatcher &dispatcher) {
+    eventDispatcher = &dispatcher;
+    u8g2.begin();
+    xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
+    LOG_I(TAG, "UI initialized");
+}
+
+void UI::uiTask(void *parameter) {
+    UI *ui = static_cast<UI *>(parameter);
+    while (true) {
+        ui->update();
+        vTaskDelay(pdMS_TO_TICKS(10)); // Update every 10ms
+    }
+}
+
+void UI::update() {
+    char key = keypad.getKey();
+    if (key) {
+        handleKeyPress(key);
+    }
+    displayMenu();
+}
+
+void UI::handleKeyPress(char key) {
+    if (enteringPassword) {
+        if (key >= '0' && key <= '9' && passwordIndex < 4) {
+            enteredPassword[passwordIndex++] = key;
+            enteredPassword[passwordIndex] = '\0';
+        } else if (key == '*') {
+            passwordIndex = 0;
+            enteredPassword[0] = '\0';
+        } else if (key == '#') {
+            passwordCorrect = (strcmp(enteredPassword, correctPassword) == 0);
+            passwordChecked = true;
+            enteringPassword = false;
+            displayPasswordResult(passwordCorrect);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            passwordChecked = false;
+            passwordIndex = 0;
+            enteredPassword[0] = '\0';
+        }
+    } else if (recordingAudio || playingAudio) {
+        if (key == '1') {
+            recordingAudio = false;
+            playingAudio = false;
+        }
+    } else {
+        switch (key) {
+            case '2':
+                currentMenuItem = (currentMenuItem - 1 + menuItemCount) % menuItemCount;
+                notificationDisplayed = false;
+                break;
+            case '8':
+                currentMenuItem = (currentMenuItem + 1) % menuItemCount;
+                notificationDisplayed = false;
+                break;
+            case '5':
+                if (currentMenuItem == 0) {
+                    notificationDisplayed = true;
+                    eventDispatcher->dispatchEvent({SEND_CAPTURE_IMAGE_COMMAND, ""});
+                } else if (currentMenuItem == 1) {
+                    enteringPassword = true;
+                } else if (currentMenuItem == 2) {
+                    recordingAudio = true;
+                    eventDispatcher->dispatchEvent({RECORD_START, ""});
+                } else if (currentMenuItem == 3) {
+                    playingAudio = true;
+                    eventDispatcher->dispatchEvent({PLAYBACK_START, ""});
+                }
+                break;
+        }
+    }
+}
+
+void UI::displayMenu() {
+    u8g2.clearBuffer();
+
+    if (notificationDisplayed && currentMenuItem == 0) {
+        u8g2.setFont(u8g2_font_profont17_tr);
+        u8g2.drawStr(15, 32, "OWNER HAS BEEN");
+        u8g2.drawStr(35, 47, "NOTIFIED");
+    } else if (enteringPassword && currentMenuItem == 1) {
+        u8g2.setFont(u8g2_font_profont17_tr);
+        u8g2.drawStr(15, 32, "ENTER PASSWORD");
+        u8g2.drawStr(35, 47, enteredPassword);
+    } else if (recordingAudio && currentMenuItem == 2) {
+        displayRecordingMessage();
+    } else if (playingAudio && currentMenuItem == 3) {
+        displayPlayingMessage();
+    } else {
+        switch (currentMenuItem) {
+            case 0:
+                u8g2.setFont(u8g2_font_profont17_tr);
+                u8g2.drawStr(33, 25, "NOTIFY");
+                u8g2.drawStr(34, 40, "OWNER");
+                u8g2.drawLine(120, 8, 120, 54);
+                u8g2.drawXBMP(7, 19, 16, 16, image_notification_bell_bits);
+                u8g2.drawEllipse(120, 12, 1, 3);
+                break;
+            case 1:
+                u8g2.drawXBMP(5, 18, 13, 16, image_device_lock_bits);
+                u8g2.setFont(u8g2_font_profont17_tr);
+                u8g2.drawStr(31, 26, "ENTER");
+                u8g2.drawStr(30, 41, "PASSWORD");
+                u8g2.drawLine(120, 8, 120, 54);
+                u8g2.drawEllipse(120, 21, 1, 3);
+                break;
+            case 2:
+                u8g2.setFont(u8g2_font_profont17_tr);
+                u8g2.drawStr(33, 25, "RECORD");
+                u8g2.drawStr(34, 40, "AUDIO");
+                u8g2.drawLine(120, 8, 120, 54);
+                u8g2.drawXBMP(9, 18, 15, 16, image_microphone_bits);
+                u8g2.drawEllipse(120, 34, 1, 3);
+                break;
+            case 3:
+                u8g2.setFont(u8g2_font_profont17_tr);
+                u8g2.drawStr(33, 20, "PLAY");
+                u8g2.drawStr(31, 36, "RECEIVED");
+                u8g2.drawLine(120, 8, 120, 54);
+                u8g2.drawEllipse(120, 48, 1, 3);
+                u8g2.drawXBMP(6, 20, 20, 16, image_volume_loud_bits);
+                u8g2.drawStr(31, 52, "AUDIO");
+                break;
+        }
+    }
+
+    u8g2.sendBuffer();
+}
+
+void UI::displayPasswordResult(bool correct) {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    if (correct) {
+        u8g2.drawStr(40, 32, "PASSWORD");
+        u8g2.drawStr(50, 47, "CORRECT");
+        eventDispatcher->dispatchEvent({CHANGE_STATE, "OPEN"});
+    } else {
+        u8g2.drawStr(40, 32, "PASSWORD");
+        u8g2.drawStr(50, 47, "WRONG");
+    }
+    u8g2.sendBuffer();
+}
+
+void UI::displayRecordingMessage() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(10, 32, "RECORDING...");
+    u8g2.drawStr(10, 47, "PRESS 1 TO STOP");
+    u8g2.sendBuffer();
+}
+
+void UI::displayPlayingMessage() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(10, 32, "PLAYING...");
+    u8g2.drawStr(10, 47, "PRESS 1 TO STOP");
+    u8g2.sendBuffer();
+}
+
+######################################
+

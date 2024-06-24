@@ -37,6 +37,19 @@ void logger(LogLevel level, const char *tag, const char *format, ...) {
 
 static const char *TAG = "MAIN";
 
+void checkPSRAM() {
+    if (psramFound()) {
+        size_t psramSize = ESP.getPsramSize();
+        size_t freePsram = ESP.getFreePsram();
+
+        LOG_I(TAG, "PSRAM is available");
+        LOG_I(TAG, "Total PSRAM: %d bytes", psramSize);
+        LOG_I(TAG, "Free PSRAM: %d bytes", freePsram);
+    } else {
+        LOG_E(TAG, "PSRAM is not available or not initialized");
+    }
+}
+
 EventDispatcher eventDispatcher;
 NetworkManager wifiHandler;
 UI ui;
@@ -73,14 +86,16 @@ void handleChangeState(const Event &event);
 void setup() {
     Serial.begin(115200);
 
-    Audio::begin();
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
+    Audio::begin();
     fingerprintHandler.begin(eventDispatcher);
     gateControl.begin(eventDispatcher);
     pirSensor.begin(eventDispatcher);
     breakBeamSensor.begin(eventDispatcher);
     ledControl.begin(eventDispatcher);
+
+    checkPSRAM();
 
     ESPNow::begin(eventDispatcher);
 
@@ -141,13 +156,13 @@ void handleAudioChunkRead(const Event &event) {
 
 void handleFingerprintMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint match found!");
-    gateControl.openGate();
-    ledControl.turnOn();
+//    gateControl.openGate();
+//    ledControl.turnOn();
 }
 
 void handleFingerprintNoMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint no match found!");
-    ledControl.turnOff();
+//    ledControl.turnOff();
 }
 
 void handleSendCaptureImageCommand(const Event &event) {
