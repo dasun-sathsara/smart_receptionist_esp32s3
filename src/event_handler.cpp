@@ -5,8 +5,8 @@
 
 static const char *TAG = "EventHandler";
 
-EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led)
-        : _audio(audio), _network(network), _gate(gate), _led(led) {}
+EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led, UI &ui, ESPNow &espNow)
+        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_RECORD_START, [this](const Event &e) { handleRecordStart(e); });
@@ -16,81 +16,76 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
     dispatcher.registerCallback(AUDIO_CHUNK_READ, [this](const Event &e) { handleAudioChunkRead(e); });
-    dispatcher.registerCallback(FINGERPRINT_MATCH, [this](const Event &e) { handleFingerprintMatch(e); });
     dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
-    dispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND,
-                                [this](const Event &e) { handleSendCaptureImageCommand(e); });
     dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
     dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(GATE_CLOSED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_ON, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_OFF, [this](const Event &e) { handleChangeStateSuccess(e); });
-    dispatcher.registerCallback(WS_DISCONNECTED, [this](const Event &e) { /* Handle WebSocket disconnected */ });
-
+    dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleResidentAuthorized(e); });
+    dispatcher.registerCallback(PASSWORD_VALIDATED, [this](const Event &e) { handleResidentAuthorized(e); });
+    dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleGrantAccess(e); });
+    dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleDenyAccess(e); });
+    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
 }
 
 
 void EventHandler::handleRecordStart(const Event &event) {
-    _audio.startRecording();
+    audio.startRecording();
     LOG_I(TAG, "Recording started");
 }
 
 void EventHandler::handleRecordStop(const Event &event) {
-    _audio.stopRecording();
+    audio.stopRecording();
     LOG_I(TAG, "Recording stopped");
 }
 
 void EventHandler::handlePlaybackStart(const Event &event) {
-    _audio.startPlayback();
+    audio.startPlayback();
     LOG_I(TAG, "Playback started");
 }
 
 void EventHandler::handlePlaybackStop(const Event &event) {
-    _audio.stopPlayback();
+    audio.stopPlayback();
     LOG_I(TAG, "Playback stopped");
 }
 
 void EventHandler::handleWebSocketConnected(const Event &event) {
-    _network.sendInitMessage();
+    network.sendInitMessage();
 }
 
 void EventHandler::handleAudioDataReceived(const Event &event) {
-    _audio.addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    audio.addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
     LOG_D(TAG, "Audio data received and added to buffer");
 }
 
 void EventHandler::handleAudioChunkRead(const Event &event) {
-    _network.sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    network.sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
     LOG_D(TAG, "Audio chunk read and sent");
 }
 
 void EventHandler::handleFingerprintMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint match found!");
-    _gate.openGate();
-    _led.turnOn();
+    gate.openGate();
+    led.turnOn();
 }
 
 void EventHandler::handleFingerprintNoMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint no match found!");
-    _led.turnOff();
-}
-
-void EventHandler::handleSendCaptureImageCommand(const Event &event) {
-    ESPNow::sendCommand("capture_image");
-    LOG_I(TAG, "Capture image command sent");
+    led.turnOff();
 }
 
 void EventHandler::handleChangeState(const Event &event) {
     StaticJsonDocument<256> doc;
-    DeserializationError error = deserializeJson(doc, event.data);
+    deserializeJson(doc, event.data);
 
     const char *device = doc["device"];
     const char *state = doc["state"];
 
     if (strcmp(device, "gate") == 0) {
-        strcmp(state, "open") == 0 ? _gate.openGate() : _gate.closeGate();
+        strcmp(state, "open") == 0 ? gate.openGate() : gate.closeGate();
     } else if (strcmp(device, "light") == 0) {
-        strcmp(state, "on") == 0 ? _led.turnOn() : _led.turnOff();
+        strcmp(state, "on") == 0 ? led.turnOn() : led.turnOff();
     } else {
         LOG_W(TAG, "Unknown device: %s", device);
     }
@@ -99,19 +94,31 @@ void EventHandler::handleChangeState(const Event &event) {
 void EventHandler::handleChangeStateSuccess(const Event &event) {
     StaticJsonDocument<256> data;
 
-    if (event.type == GATE_OPENED) {
+    if (event.type == GATE_OPENED || event.type == GATE_CLOSED) {
         data["device"] = "gate";
-        data["state"] = "open";
-    } else if (event.type == GATE_CLOSED) {
-        data["device"] = "gate";
-        data["state"] = "close";
-    } else if (event.type == LED_TURNED_ON) {
+        data["state"] = event.type == GATE_OPENED ? "open" : "close";
+    } else if (event.type == LED_TURNED_ON || event.type == LED_TURNED_OFF) {
         data["device"] = "light";
-        data["state"] = "on";
-    } else if (event.type == LED_TURNED_OFF) {
-        data["device"] = "light";
-        data["state"] = "off";
+        data["state"] = event.type == LED_TURNED_ON ? "on" : "off";
     }
 
-    _network.sendEvent("change_state", data.as<JsonObject>());
+    network.sendEvent("change_state", data.as<JsonObject>());
+}
+
+void EventHandler::handleResidentAuthorized(const Event &event) {
+    gate.openGate();
+}
+
+void EventHandler::handleGrantAccess(const Event &event) {
+    gate.openGate();
+    ui.displayAccessGranted();
+}
+
+void EventHandler::handleDenyAccess(const Event &event) {
+    ui.displayAccessDenied();
+}
+
+void EventHandler::handleMotionDetected(const Event &event) {
+    espNow.sendCommand("capture_image");
+    network.sendEvent("motion_detected", JsonObject());
 }

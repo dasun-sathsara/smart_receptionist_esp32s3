@@ -12,19 +12,16 @@ FingerprintHandler::FingerprintHandler(const HardwareSerial &serial) : mySerial(
 void FingerprintHandler::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
 
-
     if (fingerprint.verifyPassword()) {
         LOG_I(TAG, "Found fingerprint sensor!");
+        fingerprint.getTemplateCount();
+        if (fingerprint.templateCount == 0) {
+            LOG_E(TAG, "No fingerprint templates found. Please enroll a fingerprint first.");
+        } else {
+            LOG_I(TAG, "Fingerprint templates found: %d", fingerprint.templateCount);
+        }
     } else {
         LOG_E(TAG, "Did not find fingerprint sensor :(");
-    }
-
-    fingerprint.getTemplateCount();
-
-    if (fingerprint.templateCount == 0) {
-        LOG_E(TAG, "No fingerprint templates found. Please enroll a fingerprint first.");
-    } else {
-        LOG_I(TAG, "Fingerprint templates found: %d", fingerprint.templateCount);
     }
 
     xTaskCreate(fingerprintTask, "Fingerprint Task", 4096, this, 1, nullptr);
@@ -43,7 +40,7 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
                 p = handler->fingerprint.fingerFastSearch();
                 if (p == FINGERPRINT_OK) {
                     LOG_I(TAG, "Finger found!");
-                    handler->eventDispatcher->dispatchEvent({FINGERPRINT_MATCH, ""});
+                    handler->eventDispatcher->dispatchEvent({FINGERPRINT_MATCHED, ""});
                 } else if (p == FINGERPRINT_NOTFOUND) {
                     LOG_I(TAG, "No match found");
                     handler->eventDispatcher->dispatchEvent({FINGERPRINT_NO_MATCH, ""});
@@ -51,11 +48,9 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
                     LOG_E(TAG, "Finger search error: %d", p);
                 }
             } else {
-//                LOG_E(TAG, "Image conversion error: %d", p);
                 continue;
             }
         } else {
-//            LOG_E(TAG, "Image capture error: %d", p);
             continue;
         }
         vTaskDelay(1000);

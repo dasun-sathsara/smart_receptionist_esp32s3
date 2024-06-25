@@ -49,7 +49,6 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
     switch (type) {
         case WStype_DISCONNECTED:
             LOG_I(TAG, "WebSocket disconnected");
-            eventDispatcher->dispatchEvent({WS_DISCONNECTED, ""});
             break;
         case WStype_CONNECTED:
             LOG_I(TAG, "WebSocket connected");
@@ -78,6 +77,10 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                 String jsonString;
                 serializeJson(data, jsonString);
                 eventDispatcher->dispatchEvent({CMD_CHANGE_STATE, jsonString.c_str()});
+            } else if (strcmp(event_type, "grant_access") == 0) {
+                eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, "", 0});
+            } else if (strcmp(event_type, "deny_access") == 0) {
+                eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, "", 0});
             }
             break;
         }

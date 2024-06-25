@@ -56,11 +56,14 @@ PIRSensor pirSensor(PIR_PIN);
 BreakBeamSensor breakBeamSensor(BREAK_BEAM_PIN);
 LEDControl ledControl(LED_STRIP_PIN);
 Audio audio;
-EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl);
+ESPNow espNow;
+EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl, ui, espNow);
 
 void setup() {
     eventHandler.registerCallbacks(eventDispatcher);
     Serial.begin(115200);
+    checkPSRAM();
+
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
     audio.begin();
@@ -69,12 +72,11 @@ void setup() {
     pirSensor.begin(eventDispatcher);
     breakBeamSensor.begin(eventDispatcher);
     ledControl.begin(eventDispatcher);
-    checkPSRAM();
-    ESPNow::begin(eventDispatcher);
-
+    espNow.begin(eventDispatcher);
 
     LOG_I("MAIN", "System initialization complete");
 }
 
 void loop() {
+    // Not needed, all tasks are handled by the FreeRTOS scheduler.
 }

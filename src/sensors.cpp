@@ -1,16 +1,13 @@
 #include "sensors.h"
 #include "logger.h"
-#include "network_manager.h"
 
 static const char *TAG_PIR = "PIR_SENSOR";
 static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
 
+// PIR Sensor Implementation
 EventDispatcher *PIRSensor::eventDispatcher = nullptr;
-volatile bool PIRSensor::cooldownActive = false;
 
-EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
-
-PIRSensor::PIRSensor(int pin) : _pin(pin) {}
+PIRSensor::PIRSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(LOW), _state(LOW) {}
 
 void PIRSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
@@ -21,23 +18,38 @@ void PIRSensor::begin(EventDispatcher &dispatcher) {
 
 void PIRSensor::pirTask(void *parameter) {
     auto *pirSensor = static_cast<PIRSensor *>(parameter);
-    TickType_t cooldownTime = pdMS_TO_TICKS(60000); // 1 minute cooldown
+    const unsigned long debounceDelay = 50; // 50ms debounce time
+    const unsigned long cooldownTime = 60000; // 1 minute cooldown
+    unsigned long lastTriggerTime = 0;
 
     while (true) {
-        if (digitalRead(pirSensor->_pin) == HIGH && !cooldownActive) {
-            LOG_I(TAG_PIR, "Motion detected");
-            StaticJsonDocument<1> emptyDoc;
-            NetworkManager::sendEvent("motion_detected", emptyDoc.as<JsonObject>());
+        int reading = digitalRead(pirSensor->_pin);
 
-            cooldownActive = true;
-            vTaskDelay(cooldownTime);
-            cooldownActive = false;
+        if (reading != pirSensor->_lastState) {
+            pirSensor->_lastDebounceTime = millis();
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+
+        if ((millis() - pirSensor->_lastDebounceTime) > debounceDelay) {
+            if (reading != pirSensor->_state) {
+                pirSensor->_state = reading;
+
+                if (pirSensor->_state == HIGH && (millis() - lastTriggerTime) > cooldownTime) {
+                    LOG_I(TAG_PIR, "Motion detected");
+                    eventDispatcher->dispatchEvent({MOTION_DETECTED, ""});
+                    lastTriggerTime = millis();
+                }
+            }
+        }
+
+        pirSensor->_lastState = reading;
+        vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
     }
 }
 
-BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin) {}
+// Break Beam Sensor Implementation
+EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
+
+BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(HIGH), _state(HIGH) {}
 
 void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
@@ -48,17 +60,27 @@ void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
 
 void BreakBeamSensor::breakBeamTask(void *parameter) {
     auto *breakBeamSensor = static_cast<BreakBeamSensor *>(parameter);
-    bool lastState = digitalRead(breakBeamSensor->_pin);
+    const unsigned long debounceDelay = 50; // 50ms debounce time
 
     while (true) {
-        bool currentState = digitalRead(breakBeamSensor->_pin);
-        if (currentState != lastState) {
-            if (currentState == LOW) {
-                LOG_I(TAG_BREAK_BEAM, "Break beam triggered");
-                eventDispatcher->dispatchEvent({BREAK_BEAM_TRIGGERED, ""});
-            }
-            lastState = currentState;
+        int reading = digitalRead(breakBeamSensor->_pin);
+
+        if (reading != breakBeamSensor->_lastState) {
+            breakBeamSensor->_lastDebounceTime = millis();
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+
+        if ((millis() - breakBeamSensor->_lastDebounceTime) > debounceDelay) {
+            if (reading != breakBeamSensor->_state) {
+                breakBeamSensor->_state = reading;
+
+                if (breakBeamSensor->_state == LOW) {
+                    LOG_I(TAG_BREAK_BEAM, "Break beam triggered");
+                    eventDispatcher->dispatchEvent({BREAK_BEAM_TRIGGERED, ""});
+                }
+            }
+        }
+
+        breakBeamSensor->_lastState = reading;
+        vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
     }
 }

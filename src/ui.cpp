@@ -52,7 +52,7 @@ void UI::uiTask(void *parameter) {
     UI *ui = static_cast<UI *>(parameter);
     while (true) {
         ui->update();
-        vTaskDelay(pdMS_TO_TICKS(10)); // Update every 10ms
+        vTaskDelay(pdMS_TO_TICKS(500)); // Update every 500ms
     }
 }
 
@@ -101,7 +101,7 @@ void UI::handleKeyPress(char key) {
             case '5':
                 if (currentMenuItem == 0) {
                     notificationDisplayed = true;
-//                    eventDispatcher->dispatchEvent({SEND_CAPTURE_IMAGE_COMMAND, ""});
+//                    eventDispatcher->dispatchEvent({EN_CMD_CAPTURE_IMAGE, ""});
                 } else if (currentMenuItem == 1) {
                     enteringPassword = true;
                 } else if (currentMenuItem == 2) {
@@ -178,7 +178,7 @@ void UI::displayPasswordResult(bool correct) {
     if (correct) {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "CORRECT");
-//        eventDispatcher->dispatchEvent({CHANGE_STATE, "OPEN"});
+        eventDispatcher->dispatchEvent({PASSWORD_VALIDATED, ""});
     } else {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "WRONG");
@@ -201,3 +201,44 @@ void UI::displayPlayingMessage() {
     u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
     u8g2.sendBuffer();
 }
+
+void UI::displayAccessGranted() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "ACCESS");
+    u8g2.drawStr(50, 47, "GRANTED");
+    u8g2.sendBuffer();
+}
+
+void UI::displayAccessDenied() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "ACCESS");
+    u8g2.drawStr(50, 47, "DENIED");
+    u8g2.sendBuffer();
+}
+
+void UI::displayMotionDetected() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "MOTION");
+    u8g2.drawStr(50, 47, "DETECTED");
+    u8g2.sendBuffer();
+}
+
+void UI::displayFingerprintMatched() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "FINGERPRINT");
+    u8g2.drawStr(50, 47, "MATCHED");
+    u8g2.sendBuffer();
+}
+
+void UI::displayFingerprintNoMatch() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "FINGERPRINT");
+    u8g2.drawStr(50, 47, "NO MATCH");
+    u8g2.sendBuffer();
+}
+

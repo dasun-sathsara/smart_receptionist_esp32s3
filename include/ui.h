@@ -13,6 +13,10 @@ public:
 
     void update();
 
+    void displayAccessGranted();
+
+    void displayAccessDenied();
+
 private:
     static void uiTask(void *parameter);
 
@@ -25,6 +29,13 @@ private:
     void displayRecordingMessage();
 
     void displayPlayingMessage();
+
+    void displayFingerprintNoMatch();
+
+    void displayMotionDetected();
+
+    void displayFingerprintMatched();
+
 
     U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
     Keypad keypad;
@@ -43,6 +54,7 @@ private:
     static const char correctPassword[];
 
     static EventDispatcher *eventDispatcher;
+
 };
 
 #endif // UI_H

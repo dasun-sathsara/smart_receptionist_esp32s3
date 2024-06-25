@@ -12,8 +12,10 @@ public:
 private:
     static void pirTask(void *parameter);
     int _pin;
+    unsigned long _lastDebounceTime;
+    int _lastState;
+    int _state;
     static EventDispatcher *eventDispatcher;
-    static volatile bool cooldownActive;
 };
 
 class BreakBeamSensor {
@@ -24,6 +26,9 @@ public:
 private:
     static void breakBeamTask(void *parameter);
     int _pin;
+    unsigned long _lastDebounceTime;
+    int _lastState;
+    int _state;
     static EventDispatcher *eventDispatcher;
 };
 

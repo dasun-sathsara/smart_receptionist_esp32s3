@@ -17,7 +17,7 @@ struct Event {
     std::string data;
     size_t dataLength;
 
-     Event(EventType t, const std::string &d = "", size_t s = 0)
+    Event(EventType t, const std::string &d = "", size_t s = 0)
             : type(t), data(d), dataLength(s == 0 ? d.size() : s) {}
 };
 
@@ -44,18 +44,16 @@ private:
 // Define your event types here
 enum Events : EventType {
     WS_CONNECTED = 0,
-    WS_DISCONNECTED,
     CMD_RECORD_START,
     CMD_RECORD_STOP,
     CMD_PLAYBACK_START,
     CMD_PLAYBACK_STOP,
     KEYPAD_PRESS,
-    FINGERPRINT_MATCH,
+    FINGERPRINT_MATCHED,
     FINGERPRINT_NO_MATCH,
     AUDIO_DATA_RECEIVED,
     AUDIO_CHUNK_READ,
     ESPNOW_DATA_RECEIVED,
-    SEND_CAPTURE_IMAGE_COMMAND,
     MOTION_DETECTED,
     BREAK_BEAM_TRIGGERED,
     CMD_CHANGE_STATE,
@@ -63,6 +61,9 @@ enum Events : EventType {
     GATE_CLOSED,
     LED_TURNED_ON,
     LED_TURNED_OFF,
+    PASSWORD_VALIDATED,
+    CMD_GRANT_ACCESS,
+    CMD_DENY_ACCESS
 
 };
 

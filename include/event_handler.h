@@ -6,18 +6,23 @@
 #include "network_manager.h"
 #include "gate_control.h"
 #include "led_control.h"
+#include "ui.h"
+#include "esp_now.h"
+#include "esp_now_manager.h"
 
 class EventHandler {
 public:
-    EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led);
+    EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led, UI &ui, ESPNow &espNow);
 
     void registerCallbacks(EventDispatcher &dispatcher);
 
 private:
-    Audio &_audio;
-    NetworkManager &_network;
-    GateControl &_gate;
-    LEDControl &_led;
+    Audio &audio;
+    NetworkManager &network;
+    GateControl &gate;
+    LEDControl &led;
+    UI &ui;
+    ESPNow &espNow;
 
     void handleRecordStart(const Event &event);
 
@@ -37,11 +42,17 @@ private:
 
     void handleFingerprintNoMatch(const Event &event);
 
-    void handleSendCaptureImageCommand(const Event &event);
-
     void handleChangeState(const Event &event);
 
     void handleChangeStateSuccess(const Event &event);
+
+    void handleResidentAuthorized(const Event &event);
+
+    void handleGrantAccess(const Event &event);
+
+    void handleDenyAccess(const Event &event);
+
+    void handleMotionDetected(const Event &event);
 };
 
 #endif // EVENT_HANDLER_H

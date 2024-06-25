@@ -142,7 +142,7 @@ static const unsigned char image_volume_loud_bits[]
 
 class ESPNow {
 public:
-    static void begin(EventDispatcher &dispatcher);
+    void begin(EventDispatcher &dispatcher);
 
     static void sendCommand(const char *command);
 
@@ -182,7 +182,7 @@ struct Event {
     std::string data;
     size_t dataLength;
 
-     Event(EventType t, const std::string &d = "", size_t s = 0)
+    Event(EventType t, const std::string &d = "", size_t s = 0)
             : type(t), data(d), dataLength(s == 0 ? d.size() : s) {}
 };
 
@@ -215,12 +215,11 @@ enum Events : EventType {
     CMD_PLAYBACK_START,
     CMD_PLAYBACK_STOP,
     KEYPAD_PRESS,
-    FINGERPRINT_MATCH,
+    FINGERPRINT_MATCHED,
     FINGERPRINT_NO_MATCH,
     AUDIO_DATA_RECEIVED,
     AUDIO_CHUNK_READ,
     ESPNOW_DATA_RECEIVED,
-    SEND_CAPTURE_IMAGE_COMMAND,
     MOTION_DETECTED,
     BREAK_BEAM_TRIGGERED,
     CMD_CHANGE_STATE,
@@ -228,6 +227,9 @@ enum Events : EventType {
     GATE_CLOSED,
     LED_TURNED_ON,
     LED_TURNED_OFF,
+    PASSWORD_VALIDATED,
+    CMD_GRANT_ACCESS,
+    CMD_DENY_ACCESS
 
 };
 
@@ -245,18 +247,23 @@ enum Events : EventType {
 #include "network_manager.h"
 #include "gate_control.h"
 #include "led_control.h"
+#include "ui.h"
+#include "esp_now.h"
+#include "esp_now_manager.h"
 
 class EventHandler {
 public:
-    EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led);
+    EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led, UI &ui, ESPNow &espNow);
 
     void registerCallbacks(EventDispatcher &dispatcher);
 
 private:
-    Audio &_audio;
-    NetworkManager &_network;
-    GateControl &_gate;
-    LEDControl &_led;
+    Audio &audio;
+    NetworkManager &network;
+    GateControl &gate;
+    LEDControl &led;
+    UI &ui;
+    ESPNow &espNow;
 
     void handleRecordStart(const Event &event);
 
@@ -276,11 +283,17 @@ private:
 
     void handleFingerprintNoMatch(const Event &event);
 
-    void handleSendCaptureImageCommand(const Event &event);
-
     void handleChangeState(const Event &event);
 
     void handleChangeStateSuccess(const Event &event);
+
+    void handleResidentAuthorized(const Event &event);
+
+    void handleGrantAccess(const Event &event);
+
+    void handleDenyAccess(const Event &event);
+
+    void handleMotionDetected(const Event &event);
 };
 
 #endif // EVENT_HANDLER_H
@@ -500,6 +513,10 @@ public:
 
     void update();
 
+    void displayAccessGranted();
+
+    void displayAccessDenied();
+
 private:
     static void uiTask(void *parameter);
 
@@ -512,6 +529,13 @@ private:
     void displayRecordingMessage();
 
     void displayPlayingMessage();
+
+    void displayFingerprintNoMatch();
+
+    void displayMotionDetected();
+
+    void displayFingerprintMatched();
+
 
     U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
     Keypad keypad;
@@ -530,6 +554,7 @@ private:
     static const char correctPassword[];
 
     static EventDispatcher *eventDispatcher;
+
 };
 
 #endif // UI_H
@@ -844,8 +869,8 @@ void EventDispatcher::removeCallback(EventType type) {
 
 static const char *TAG = "EventHandler";
 
-EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led)
-        : _audio(audio), _network(network), _gate(gate), _led(led) {}
+EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led, UI &ui, ESPNow &espNow)
+        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_RECORD_START, [this](const Event &e) { handleRecordStart(e); });
@@ -855,121 +880,113 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
     dispatcher.registerCallback(AUDIO_CHUNK_READ, [this](const Event &e) { handleAudioChunkRead(e); });
-    dispatcher.registerCallback(FINGERPRINT_MATCH, [this](const Event &e) { handleFingerprintMatch(e); });
     dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
-    dispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND,
-                                [this](const Event &e) { handleSendCaptureImageCommand(e); });
     dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
     dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(GATE_CLOSED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_ON, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_OFF, [this](const Event &e) { handleChangeStateSuccess(e); });
-    dispatcher.registerCallback(WS_DISCONNECTED, [this](const Event &e) { /* Handle WebSocket disconnected */ });
-
+    dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleResidentAuthorized(e); });
+    dispatcher.registerCallback(PASSWORD_VALIDATED, [this](const Event &e) { handleResidentAuthorized(e); });
+    dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleGrantAccess(e); });
+    dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleDenyAccess(e); });
+    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
 }
 
 
 void EventHandler::handleRecordStart(const Event &event) {
-    _audio.startRecording();
+    audio.startRecording();
     LOG_I(TAG, "Recording started");
 }
 
 void EventHandler::handleRecordStop(const Event &event) {
-    _audio.stopRecording();
+    audio.stopRecording();
     LOG_I(TAG, "Recording stopped");
 }
 
 void EventHandler::handlePlaybackStart(const Event &event) {
-    _audio.startPlayback();
+    audio.startPlayback();
     LOG_I(TAG, "Playback started");
 }
 
 void EventHandler::handlePlaybackStop(const Event &event) {
-    _audio.stopPlayback();
+    audio.stopPlayback();
     LOG_I(TAG, "Playback stopped");
 }
 
 void EventHandler::handleWebSocketConnected(const Event &event) {
-    _network.sendInitMessage();
+    network.sendInitMessage();
 }
 
 void EventHandler::handleAudioDataReceived(const Event &event) {
-    _audio.addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    audio.addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
     LOG_D(TAG, "Audio data received and added to buffer");
 }
 
 void EventHandler::handleAudioChunkRead(const Event &event) {
-    _network.sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    network.sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
     LOG_D(TAG, "Audio chunk read and sent");
 }
 
 void EventHandler::handleFingerprintMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint match found!");
-    _gate.openGate();
-    _led.turnOn();
+    gate.openGate();
+    led.turnOn();
 }
 
 void EventHandler::handleFingerprintNoMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint no match found!");
-    _led.turnOff();
-}
-
-void EventHandler::handleSendCaptureImageCommand(const Event &event) {
-    ESPNow::sendCommand("capture_image");
-    LOG_I(TAG, "Capture image command sent");
+    led.turnOff();
 }
 
 void EventHandler::handleChangeState(const Event &event) {
     StaticJsonDocument<256> doc;
-    DeserializationError error = deserializeJson(doc, event.data);
-    if (error) {
-        LOG_E(TAG, "Failed to parse JSON: %s", error.c_str());
-        return;
-    }
+    deserializeJson(doc, event.data);
 
-    const char *device = doc["data"]["device"];
-    const char *state = doc["data"]["state"];
+    const char *device = doc["device"];
+    const char *state = doc["state"];
 
-    if (device && state) {
-        if (strcmp(device, "gate") == 0) {
-            if (strcmp(state, "open") == 0) {
-                _gate.openGate();
-            } else if (strcmp(state, "close") == 0) {
-                _gate.closeGate();
-            }
-        } else if (strcmp(device, "light") == 0) {
-            if (strcmp(state, "on") == 0) {
-                _led.turnOn();
-            } else if (strcmp(state, "off") == 0) {
-                _led.turnOff();
-            }
-        } else {
-            LOG_W(TAG, "Unknown device: %s", device);
-        }
+    if (strcmp(device, "gate") == 0) {
+        strcmp(state, "open") == 0 ? gate.openGate() : gate.closeGate();
+    } else if (strcmp(device, "light") == 0) {
+        strcmp(state, "on") == 0 ? led.turnOn() : led.turnOff();
     } else {
-        LOG_E(TAG, "Invalid change state command format");
+        LOG_W(TAG, "Unknown device: %s", device);
     }
 }
 
 void EventHandler::handleChangeStateSuccess(const Event &event) {
     StaticJsonDocument<256> data;
 
-    if (event.type == GATE_OPENED) {
+    if (event.type == GATE_OPENED || event.type == GATE_CLOSED) {
         data["device"] = "gate";
-        data["state"] = "open";
-    } else if (event.type == GATE_CLOSED) {
-        data["device"] = "gate";
-        data["state"] = "close";
-    } else if (event.type == LED_TURNED_ON) {
-        data["device"] = "led";
-        data["state"] = "on";
-    } else if (event.type == LED_TURNED_OFF) {
-        data["device"] = "led";
-        data["state"] = "off";
+        data["state"] = event.type == GATE_OPENED ? "open" : "close";
+    } else if (event.type == LED_TURNED_ON || event.type == LED_TURNED_OFF) {
+        data["device"] = "light";
+        data["state"] = event.type == LED_TURNED_ON ? "on" : "off";
     }
 
-    _network.sendEvent("state_changed", data.as<JsonObject>());
+    network.sendEvent("change_state", data.as<JsonObject>());
 }
+
+void EventHandler::handleResidentAuthorized(const Event &event) {
+    gate.openGate();
+}
+
+void EventHandler::handleGrantAccess(const Event &event) {
+    gate.openGate();
+    ui.displayAccessGranted();
+}
+
+void EventHandler::handleDenyAccess(const Event &event) {
+    ui.displayAccessDenied();
+}
+
+void EventHandler::handleMotionDetected(const Event &event) {
+    espNow.sendCommand("capture_image");
+    network.sendEvent("motion_detected", JsonObject());
+}
+
 
 #################################################
 
@@ -989,19 +1006,16 @@ FingerprintHandler::FingerprintHandler(const HardwareSerial &serial) : mySerial(
 void FingerprintHandler::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
 
-
     if (fingerprint.verifyPassword()) {
         LOG_I(TAG, "Found fingerprint sensor!");
+        fingerprint.getTemplateCount();
+        if (fingerprint.templateCount == 0) {
+            LOG_E(TAG, "No fingerprint templates found. Please enroll a fingerprint first.");
+        } else {
+            LOG_I(TAG, "Fingerprint templates found: %d", fingerprint.templateCount);
+        }
     } else {
         LOG_E(TAG, "Did not find fingerprint sensor :(");
-    }
-
-    fingerprint.getTemplateCount();
-
-    if (fingerprint.templateCount == 0) {
-        LOG_E(TAG, "No fingerprint templates found. Please enroll a fingerprint first.");
-    } else {
-        LOG_I(TAG, "Fingerprint templates found: %d", fingerprint.templateCount);
     }
 
     xTaskCreate(fingerprintTask, "Fingerprint Task", 4096, this, 1, nullptr);
@@ -1020,7 +1034,7 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
                 p = handler->fingerprint.fingerFastSearch();
                 if (p == FINGERPRINT_OK) {
                     LOG_I(TAG, "Finger found!");
-                    handler->eventDispatcher->dispatchEvent({FINGERPRINT_MATCH, ""});
+                    handler->eventDispatcher->dispatchEvent({FINGERPRINT_MATCHED, ""});
                 } else if (p == FINGERPRINT_NOTFOUND) {
                     LOG_I(TAG, "No match found");
                     handler->eventDispatcher->dispatchEvent({FINGERPRINT_NO_MATCH, ""});
@@ -1028,11 +1042,9 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
                     LOG_E(TAG, "Finger search error: %d", p);
                 }
             } else {
-//                LOG_E(TAG, "Image conversion error: %d", p);
                 continue;
             }
         } else {
-//            LOG_E(TAG, "Image capture error: %d", p);
             continue;
         }
         vTaskDelay(1000);
@@ -1166,7 +1178,7 @@ void LEDControl::begin(EventDispatcher &dispatcher) {
 }
 
 void LEDControl::turnOn() {
-    digitalWrite(_pin, HIGH);
+//    digitalWrite(_pin, HIGH);
     LOG_I(TAG, "LED turned on");
     eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
 }
@@ -1223,12 +1235,7 @@ static const char *TAG = "MAIN";
 
 void checkPSRAM() {
     if (psramFound()) {
-        size_t psramSize = ESP.getPsramSize();
-        size_t freePsram = ESP.getFreePsram();
-
         LOG_I(TAG, "PSRAM is available");
-        LOG_I(TAG, "Total PSRAM: %d bytes", psramSize);
-        LOG_I(TAG, "Free PSRAM: %d bytes", freePsram);
     } else {
         LOG_E(TAG, "PSRAM is not available or not initialized");
     }
@@ -1244,11 +1251,14 @@ PIRSensor pirSensor(PIR_PIN);
 BreakBeamSensor breakBeamSensor(BREAK_BEAM_PIN);
 LEDControl ledControl(LED_STRIP_PIN);
 Audio audio;
-EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl);
+ESPNow espNow;
+EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl, ui, espNow);
 
 void setup() {
     eventHandler.registerCallbacks(eventDispatcher);
     Serial.begin(115200);
+    checkPSRAM();
+
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
     audio.begin();
@@ -1257,14 +1267,13 @@ void setup() {
     pirSensor.begin(eventDispatcher);
     breakBeamSensor.begin(eventDispatcher);
     ledControl.begin(eventDispatcher);
-    checkPSRAM();
-    ESPNow::begin(eventDispatcher);
-
+    espNow.begin(eventDispatcher);
 
     LOG_I("MAIN", "System initialization complete");
 }
 
 void loop() {
+    // Not needed, all tasks are handled by the FreeRTOS scheduler.
 }
 
 
@@ -1309,7 +1318,7 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
             NetworkManager::loop();
             vTaskDelay(10);
         }
-    }, "WiFi Task", 4096, this, 2, nullptr);
+    }, "WiFi Task", 8192, this, 2, nullptr);
 }
 
 
@@ -1330,9 +1339,7 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             eventDispatcher->dispatchEvent({WS_CONNECTED, ""});
             break;
         case WStype_TEXT: {
-
             DeserializationError error = deserializeJson(doc, payload, length);
-
             if (error) {
                 LOG_E(TAG, "Failed to parse JSON: %s", error.c_str());
                 return;
@@ -1350,8 +1357,14 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             } else if (strcmp(event_type, "stop_playing") == 0) {
                 eventDispatcher->dispatchEvent({CMD_PLAYBACK_STOP, "", 0});
             } else if (strcmp(event_type, "change_state") == 0) {
-                eventDispatcher->dispatchEvent(
-                        {CMD_CHANGE_STATE, std::string(reinterpret_cast<char *>(payload), length)});
+                JsonObject data = doc["data"];
+                String jsonString;
+                serializeJson(data, jsonString);
+                eventDispatcher->dispatchEvent({CMD_CHANGE_STATE, jsonString.c_str()});
+            } else if (strcmp(event_type, "grant_access") == 0) {
+                eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, "", 0});
+            } else if (strcmp(event_type, "deny_access") == 0) {
+                eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, "", 0});
             }
             break;
         }
@@ -1370,7 +1383,6 @@ void NetworkManager::sendInitMessage() {
 
 void NetworkManager::sendAudioChunk(const uint8_t *data, size_t len) {
     webSocket.sendBIN(data, len);
-    LOG_I(TAG, "Sent audio chunk");
 }
 
 void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
@@ -1417,9 +1429,7 @@ void PIRSensor::pirTask(void *parameter) {
     while (true) {
         if (digitalRead(pirSensor->_pin) == HIGH && !cooldownActive) {
             LOG_I(TAG_PIR, "Motion detected");
-            StaticJsonDocument<1> emptyDoc;
-            NetworkManager::sendEvent("motion_detected", emptyDoc.as<JsonObject>());
-
+            eventDispatcher->dispatchEvent({MOTION_DETECTED, ""});
             cooldownActive = true;
             vTaskDelay(cooldownTime);
             cooldownActive = false;
@@ -1561,7 +1571,7 @@ void UI::handleKeyPress(char key) {
             case '5':
                 if (currentMenuItem == 0) {
                     notificationDisplayed = true;
-//                    eventDispatcher->dispatchEvent({SEND_CAPTURE_IMAGE_COMMAND, ""});
+//                    eventDispatcher->dispatchEvent({EN_CMD_CAPTURE_IMAGE, ""});
                 } else if (currentMenuItem == 1) {
                     enteringPassword = true;
                 } else if (currentMenuItem == 2) {
@@ -1638,7 +1648,7 @@ void UI::displayPasswordResult(bool correct) {
     if (correct) {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "CORRECT");
-//        eventDispatcher->dispatchEvent({CHANGE_STATE, "OPEN"});
+        eventDispatcher->dispatchEvent({PASSWORD_VALIDATED, ""});
     } else {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "WRONG");
@@ -1661,6 +1671,48 @@ void UI::displayPlayingMessage() {
     u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
     u8g2.sendBuffer();
 }
+
+void UI::displayAccessGranted() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "ACCESS");
+    u8g2.drawStr(50, 47, "GRANTED");
+    u8g2.sendBuffer();
+}
+
+void UI::displayAccessDenied() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "ACCESS");
+    u8g2.drawStr(50, 47, "DENIED");
+    u8g2.sendBuffer();
+}
+
+void UI::displayMotionDetected() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "MOTION");
+    u8g2.drawStr(50, 47, "DETECTED");
+    u8g2.sendBuffer();
+}
+
+void UI::displayFingerprintMatched() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "FINGERPRINT");
+    u8g2.drawStr(50, 47, "MATCHED");
+    u8g2.sendBuffer();
+}
+
+void UI::displayFingerprintNoMatch() {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_profont17_tr);
+    u8g2.drawStr(40, 32, "FINGERPRINT");
+    u8g2.drawStr(50, 47, "NO MATCH");
+    u8g2.sendBuffer();
+}
+
+
 
 ######################################
 
