@@ -10,7 +10,7 @@
 
 class Audio {
 public:
-    static void begin();
+     void begin();
 
     static void startRecording();
 
@@ -70,7 +70,7 @@ private:
 #define PIR_PIN 21
 
 // Break beam sensor configuration
-#define BREAK_BEAM_PIN 33
+#define BREAK_BEAM_PIN 39
 
 // LED strip configuration
 #define LED_STRIP_PIN 38
@@ -89,18 +89,20 @@ private:
 #define SAMPLE_RATE 44100
 #define BITS_PER_SAMPLE 16
 #define CHANNELS 1
-#define DMA_BUF_COUNT 8
+#define DMA_BUF_COUNT 16
 #define DMA_BUF_LEN 1024
 
 // Buffer sizes
-#define I2S_BUFFER_SIZE (1024 * 8) // Adjust as needed
+#define I2S_BUFFER_SIZE (1024 * 8)
 
 // Fingerprint sensor configuration
 #define FINGERPRINT_TX 17
 #define FINGERPRINT_RX 18
 
 // OLED I2C address
-#define OLED_ADDRESS 0x3C
+#define SDA_PIN 8
+#define SCL_PIN 18
+#define I2C_ADDRESS 0x3C
 
 // Define images
 static const unsigned char image_notification_bell_bits[]
@@ -212,6 +214,41 @@ private:
 #endif // EVENTS_H
 
 ############################################
+
+############# include\event_handler.h #############
+
+#ifndef EVENT_HANDLER_H
+#define EVENT_HANDLER_H
+
+#include "events.h"
+
+// Callback function prototypes
+void handleRecordStart(const Event &event);
+
+void handleRecordStop(const Event &event);
+
+void handlePlaybackStart(const Event &event);
+
+void handlePlaybackStop(const Event &event);
+
+void handleWebSocketConnected(const Event &event);
+
+void handleAudioDataReceived(const Event &event);
+
+void handleAudioChunkRead(const Event &event);
+
+void handleFingerprintMatch(const Event &event);
+
+void handleFingerprintNoMatch(const Event &event);
+
+void handleSendCaptureImageCommand(const Event &event);
+
+void handleChangeState(const Event &event);
+
+#endif //EVENT_HANDLER_H
+
+
+###################################################
 
 ############# include\fingerprint.h #############
 
@@ -718,6 +755,75 @@ void EventDispatcher::dispatchEvent(const Event &event) {
 
 ##########################################
 
+############# src\event_handler.cpp #############
+
+#include "event_handler.h"
+
+void handleRecordStart(const Event &event) {
+    Audio::startRecording();
+    LOG_I(TAG, "Recording started");
+}
+
+void handleRecordStop(const Event &event) {
+    Audio::stopRecording();
+    LOG_I(TAG, "Recording stopped");
+}
+
+void handlePlaybackStart(const Event &event) {
+    Audio::startPlayback();
+    LOG_I(TAG, "Playback started");
+}
+
+void handlePlaybackStop(const Event &event) {
+    Audio::stopPlayback();
+    LOG_I(TAG, "Playback stopped");
+}
+
+void handleWebSocketConnected(const Event &event) {
+    NetworkManager::sendInitMessage();
+    LOG_I(TAG, "WebSocket connected, init message sent");
+}
+
+void handleAudioDataReceived(const Event &event) {
+    Audio::addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    LOG_D(TAG, "Audio data received and added to buffer");
+}
+
+void handleAudioChunkRead(const Event &event) {
+    NetworkManager::sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    LOG_D(TAG, "Audio chunk read and sent");
+}
+
+void handleFingerprintMatch(const Event &event) {
+    LOG_I(TAG, "Fingerprint match found!");
+//    gateControl.openGate();
+//    ledControl.turnOn();
+}
+
+void handleFingerprintNoMatch(const Event &event) {
+    LOG_I(TAG, "Fingerprint no match found!");
+//    ledControl.turnOff();
+}
+
+void handleSendCaptureImageCommand(const Event &event) {
+    ESPNow::sendCommand("capture_image");
+    LOG_I(TAG, "Capture image command sent");
+}
+
+void handleChangeState(const Event &event) {
+    if (event.data == "OPEN") {
+        gateControl.openGate();
+        ledControl.turnOn();
+        LOG_I(TAG, "Gate opened and LED turned on");
+    } else if (event.data == "CLOSE") {
+        gateControl.closeGate();
+        ledControl.turnOff();
+        LOG_I(TAG, "Gate closed and LED turned off");
+    }
+}
+
+#################################################
+
 ############# src\fingerprint.cpp #############
 
 #include "fingerprint.h"
@@ -963,6 +1069,19 @@ void logger(LogLevel level, const char *tag, const char *format, ...) {
 
 static const char *TAG = "MAIN";
 
+void checkPSRAM() {
+    if (psramFound()) {
+        size_t psramSize = ESP.getPsramSize();
+        size_t freePsram = ESP.getFreePsram();
+
+        LOG_I(TAG, "PSRAM is available");
+        LOG_I(TAG, "Total PSRAM: %d bytes", psramSize);
+        LOG_I(TAG, "Free PSRAM: %d bytes", freePsram);
+    } else {
+        LOG_E(TAG, "PSRAM is not available or not initialized");
+    }
+}
+
 EventDispatcher eventDispatcher;
 NetworkManager wifiHandler;
 UI ui;
@@ -972,41 +1091,23 @@ GateControl gateControl(MOTOR_PIN1, MOTOR_PIN2, MOTOR_ENABLE);
 PIRSensor pirSensor(PIR_PIN);
 BreakBeamSensor breakBeamSensor(BREAK_BEAM_PIN);
 LEDControl ledControl(LED_STRIP_PIN);
+Audio audio;
 
-// Callback function prototypes
-void handleRecordStart(const Event &event);
 
-void handleRecordStop(const Event &event);
-
-void handlePlaybackStart(const Event &event);
-
-void handlePlaybackStop(const Event &event);
-
-void handleWebSocketConnected(const Event &event);
-
-void handleAudioDataReceived(const Event &event);
-
-void handleAudioChunkRead(const Event &event);
-
-void handleFingerprintMatch(const Event &event);
-
-void handleFingerprintNoMatch(const Event &event);
-
-void handleSendCaptureImageCommand(const Event &event);
-
-void handleChangeState(const Event &event);
 
 void setup() {
     Serial.begin(115200);
 
-    Audio::begin();
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
+    audio.begin();
     fingerprintHandler.begin(eventDispatcher);
     gateControl.begin(eventDispatcher);
     pirSensor.begin(eventDispatcher);
     breakBeamSensor.begin(eventDispatcher);
     ledControl.begin(eventDispatcher);
+
+    checkPSRAM();
 
     ESPNow::begin(eventDispatcher);
 
@@ -1030,68 +1131,6 @@ void loop() {
     // No need to implement loop as FreeRTOS tasks are handling the logic
 }
 
-void handleRecordStart(const Event &event) {
-    Audio::startRecording();
-    LOG_I(TAG, "Recording started");
-}
-
-void handleRecordStop(const Event &event) {
-    Audio::stopRecording();
-    LOG_I(TAG, "Recording stopped");
-}
-
-void handlePlaybackStart(const Event &event) {
-    Audio::startPlayback();
-    LOG_I(TAG, "Playback started");
-}
-
-void handlePlaybackStop(const Event &event) {
-    Audio::stopPlayback();
-    LOG_I(TAG, "Playback stopped");
-}
-
-void handleWebSocketConnected(const Event &event) {
-    NetworkManager::sendInitMessage();
-    LOG_I(TAG, "WebSocket connected, init message sent");
-}
-
-void handleAudioDataReceived(const Event &event) {
-    Audio::addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
-    LOG_D(TAG, "Audio data received and added to buffer");
-}
-
-void handleAudioChunkRead(const Event &event) {
-    NetworkManager::sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
-    LOG_D(TAG, "Audio chunk read and sent");
-}
-
-void handleFingerprintMatch(const Event &event) {
-    LOG_I(TAG, "Fingerprint match found!");
-//    gateControl.openGate();
-//    ledControl.turnOn();
-}
-
-void handleFingerprintNoMatch(const Event &event) {
-    LOG_I(TAG, "Fingerprint no match found!");
-//    ledControl.turnOff();
-}
-
-void handleSendCaptureImageCommand(const Event &event) {
-    ESPNow::sendCommand("capture_image");
-    LOG_I(TAG, "Capture image command sent");
-}
-
-void handleChangeState(const Event &event) {
-    if (event.data == "OPEN") {
-        gateControl.openGate();
-        ledControl.turnOn();
-        LOG_I(TAG, "Gate opened and LED turned on");
-    } else if (event.data == "CLOSE") {
-        gateControl.closeGate();
-        ledControl.turnOff();
-        LOG_I(TAG, "Gate closed and LED turned off");
-    }
-}
 
 ########################################
 
@@ -1237,8 +1276,7 @@ void PIRSensor::begin(EventDispatcher &dispatcher) {
 
 void PIRSensor::pirTask(void *parameter) {
     auto *pirSensor = static_cast<PIRSensor *>(parameter);
-    TickType_t
-    cooldownTime = pdMS_TO_TICKS(60000); // 1 minute cooldown
+    TickType_t cooldownTime = pdMS_TO_TICKS(60000); // 1 minute cooldown
 
     while (true) {
         if (digitalRead(pirSensor->_pin) == HIGH && !cooldownActive) {
@@ -1287,21 +1325,22 @@ void BreakBeamSensor::breakBeamTask(void *parameter) {
 #include "ui.h"
 #include "config.h"
 #include "logger.h"
+#include <Wire.h>
 
 static const char *TAG = "UI";
 
 // Define keypad size
 const byte ROWS = 4;
-const byte COLS = 4;
+const byte COLS = 3;
 
 char hexaKeys[ROWS][COLS] = {
-        {'0', '1', '2', '3'},
-        {'4', '5', '6', '7'},
-        {'8', '9', 'A', 'B'},
-        {'C', 'D', 'E', 'F'}
+        {'1', '2', '3',},
+        {'4', '5', '6',},
+        {'7', '8', '9',},
+        {'*', '0', '#',}
 };
-byte rowPins[ROWS] = {3, 2, 1, 0};
-byte colPins[COLS] = {7, 6, 5, 4};
+byte rowPins[ROWS] = {4, 5, 6, 7};
+byte colPins[COLS] = {15, 16, 17};
 
 const char *UI::menuItems[] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY RECEIVED AUDIO"};
 const int UI::menuItemCount = sizeof(menuItems) / sizeof(menuItems[0]);
@@ -1319,11 +1358,15 @@ UI::UI() : u8g2(U8G2_R0, U8X8_PIN_NONE),
            recordingAudio(false),
            playingAudio(false),
            passwordIndex(0) {
+
     memset(enteredPassword, 0, sizeof(enteredPassword));
 }
 
 void UI::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+    Wire.begin(SDA_PIN, SCL_PIN);
+    u8g2.setBusClock(400000);  // Set I2C clock speed to 400kHz
+    u8g2.setI2CAddress(I2C_ADDRESS * 2);
     u8g2.begin();
     xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
     LOG_I(TAG, "UI initialized");
@@ -1340,6 +1383,7 @@ void UI::uiTask(void *parameter) {
 void UI::update() {
     char key = keypad.getKey();
     if (key) {
+        LOG_I(TAG, "Key pressed: %c", key);
         handleKeyPress(key);
     }
     displayMenu();
@@ -1381,15 +1425,15 @@ void UI::handleKeyPress(char key) {
             case '5':
                 if (currentMenuItem == 0) {
                     notificationDisplayed = true;
-                    eventDispatcher->dispatchEvent({SEND_CAPTURE_IMAGE_COMMAND, ""});
+//                    eventDispatcher->dispatchEvent({SEND_CAPTURE_IMAGE_COMMAND, ""});
                 } else if (currentMenuItem == 1) {
                     enteringPassword = true;
                 } else if (currentMenuItem == 2) {
                     recordingAudio = true;
-                    eventDispatcher->dispatchEvent({RECORD_START, ""});
+//                    eventDispatcher->dispatchEvent({RECORD_START, ""});
                 } else if (currentMenuItem == 3) {
                     playingAudio = true;
-                    eventDispatcher->dispatchEvent({PLAYBACK_START, ""});
+//                    eventDispatcher->dispatchEvent({PLAYBACK_START, ""});
                 }
                 break;
         }
@@ -1415,36 +1459,36 @@ void UI::displayMenu() {
         switch (currentMenuItem) {
             case 0:
                 u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawStr(33, 25, "NOTIFY");
-                u8g2.drawStr(34, 40, "OWNER");
-                u8g2.drawLine(120, 8, 120, 54);
                 u8g2.drawXBMP(7, 19, 16, 16, image_notification_bell_bits);
+                u8g2.drawStr(33, 25, "NOTIFY");
+                u8g2.drawStr(33, 40, "OWNER");
+                u8g2.drawLine(120, 8, 120, 54);
                 u8g2.drawEllipse(120, 12, 1, 3);
                 break;
             case 1:
-                u8g2.drawXBMP(5, 18, 13, 16, image_device_lock_bits);
                 u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawStr(31, 26, "ENTER");
-                u8g2.drawStr(30, 41, "PASSWORD");
+                u8g2.drawXBMP(7, 19, 16, 16, image_device_lock_bits);
+                u8g2.drawStr(33, 25, "ENTER");
+                u8g2.drawStr(33, 40, "PASSWORD");
                 u8g2.drawLine(120, 8, 120, 54);
                 u8g2.drawEllipse(120, 21, 1, 3);
                 break;
             case 2:
                 u8g2.setFont(u8g2_font_profont17_tr);
+                u8g2.drawXBMP(7, 19, 16, 16, image_microphone_bits);
                 u8g2.drawStr(33, 25, "RECORD");
-                u8g2.drawStr(34, 40, "AUDIO");
+                u8g2.drawStr(33, 40, "AUDIO");
                 u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawXBMP(9, 18, 15, 16, image_microphone_bits);
                 u8g2.drawEllipse(120, 34, 1, 3);
                 break;
             case 3:
                 u8g2.setFont(u8g2_font_profont17_tr);
+                u8g2.drawXBMP(7, 19, 16, 16, image_volume_loud_bits);
                 u8g2.drawStr(33, 20, "PLAY");
-                u8g2.drawStr(31, 36, "RECEIVED");
+                u8g2.drawStr(33, 36, "RECEIVED");
                 u8g2.drawLine(120, 8, 120, 54);
                 u8g2.drawEllipse(120, 48, 1, 3);
-                u8g2.drawXBMP(6, 20, 20, 16, image_volume_loud_bits);
-                u8g2.drawStr(31, 52, "AUDIO");
+                u8g2.drawStr(33, 52, "AUDIO");
                 break;
         }
     }
@@ -1458,7 +1502,7 @@ void UI::displayPasswordResult(bool correct) {
     if (correct) {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "CORRECT");
-        eventDispatcher->dispatchEvent({CHANGE_STATE, "OPEN"});
+//        eventDispatcher->dispatchEvent({CHANGE_STATE, "OPEN"});
     } else {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "WRONG");
@@ -1469,16 +1513,16 @@ void UI::displayPasswordResult(bool correct) {
 void UI::displayRecordingMessage() {
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(10, 32, "RECORDING...");
-    u8g2.drawStr(10, 47, "PRESS 1 TO STOP");
+    u8g2.drawStr(2, 32, "RECORDING...");
+    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
     u8g2.sendBuffer();
 }
 
 void UI::displayPlayingMessage() {
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(10, 32, "PLAYING...");
-    u8g2.drawStr(10, 47, "PRESS 1 TO STOP");
+    u8g2.drawStr(2, 32, "PLAYING...");
+    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
     u8g2.sendBuffer();
 }
 

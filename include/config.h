@@ -50,7 +50,9 @@
 #define FINGERPRINT_RX 18
 
 // OLED I2C address
-#define OLED_ADDRESS 0x3C
+#define SDA_PIN 8
+#define SCL_PIN 18
+#define I2C_ADDRESS 0x3C
 
 // Define images
 static const unsigned char image_notification_bell_bits[]

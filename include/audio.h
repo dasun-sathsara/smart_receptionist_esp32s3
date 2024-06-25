@@ -8,7 +8,7 @@
 
 class Audio {
 public:
-    static void begin();
+     void begin();
 
     static void startRecording();
 

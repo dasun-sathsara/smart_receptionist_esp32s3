@@ -1,21 +1,22 @@
 #include "ui.h"
 #include "config.h"
 #include "logger.h"
+#include <Wire.h>
 
 static const char *TAG = "UI";
 
 // Define keypad size
 const byte ROWS = 4;
-const byte COLS = 4;
+const byte COLS = 3;
 
 char hexaKeys[ROWS][COLS] = {
-        {'0', '1', '2', '3'},
-        {'4', '5', '6', '7'},
-        {'8', '9', 'A', 'B'},
-        {'C', 'D', 'E', 'F'}
+        {'1', '2', '3',},
+        {'4', '5', '6',},
+        {'7', '8', '9',},
+        {'*', '0', '#',}
 };
-byte rowPins[ROWS] = {3, 2, 1, 0};
-byte colPins[COLS] = {7, 6, 5, 4};
+byte rowPins[ROWS] = {4, 5, 6, 7};
+byte colPins[COLS] = {15, 16, 17};
 
 const char *UI::menuItems[] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY RECEIVED AUDIO"};
 const int UI::menuItemCount = sizeof(menuItems) / sizeof(menuItems[0]);
@@ -33,11 +34,15 @@ UI::UI() : u8g2(U8G2_R0, U8X8_PIN_NONE),
            recordingAudio(false),
            playingAudio(false),
            passwordIndex(0) {
+
     memset(enteredPassword, 0, sizeof(enteredPassword));
 }
 
 void UI::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+    Wire.begin(SDA_PIN, SCL_PIN);
+    u8g2.setBusClock(400000);  // Set I2C clock speed to 400kHz
+    u8g2.setI2CAddress(I2C_ADDRESS * 2);
     u8g2.begin();
     xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
     LOG_I(TAG, "UI initialized");
@@ -54,6 +59,7 @@ void UI::uiTask(void *parameter) {
 void UI::update() {
     char key = keypad.getKey();
     if (key) {
+        LOG_I(TAG, "Key pressed: %c", key);
         handleKeyPress(key);
     }
     displayMenu();
@@ -95,15 +101,15 @@ void UI::handleKeyPress(char key) {
             case '5':
                 if (currentMenuItem == 0) {
                     notificationDisplayed = true;
-                    eventDispatcher->dispatchEvent({SEND_CAPTURE_IMAGE_COMMAND, ""});
+//                    eventDispatcher->dispatchEvent({SEND_CAPTURE_IMAGE_COMMAND, ""});
                 } else if (currentMenuItem == 1) {
                     enteringPassword = true;
                 } else if (currentMenuItem == 2) {
                     recordingAudio = true;
-                    eventDispatcher->dispatchEvent({RECORD_START, ""});
+//                    eventDispatcher->dispatchEvent({RECORD_START, ""});
                 } else if (currentMenuItem == 3) {
                     playingAudio = true;
-                    eventDispatcher->dispatchEvent({PLAYBACK_START, ""});
+//                    eventDispatcher->dispatchEvent({PLAYBACK_START, ""});
                 }
                 break;
         }
@@ -129,36 +135,36 @@ void UI::displayMenu() {
         switch (currentMenuItem) {
             case 0:
                 u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawStr(33, 25, "NOTIFY");
-                u8g2.drawStr(34, 40, "OWNER");
-                u8g2.drawLine(120, 8, 120, 54);
                 u8g2.drawXBMP(7, 19, 16, 16, image_notification_bell_bits);
+                u8g2.drawStr(33, 25, "NOTIFY");
+                u8g2.drawStr(33, 40, "OWNER");
+                u8g2.drawLine(120, 8, 120, 54);
                 u8g2.drawEllipse(120, 12, 1, 3);
                 break;
             case 1:
-                u8g2.drawXBMP(5, 18, 13, 16, image_device_lock_bits);
                 u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawStr(31, 26, "ENTER");
-                u8g2.drawStr(30, 41, "PASSWORD");
+                u8g2.drawXBMP(7, 19, 16, 16, image_device_lock_bits);
+                u8g2.drawStr(33, 25, "ENTER");
+                u8g2.drawStr(33, 40, "PASSWORD");
                 u8g2.drawLine(120, 8, 120, 54);
                 u8g2.drawEllipse(120, 21, 1, 3);
                 break;
             case 2:
                 u8g2.setFont(u8g2_font_profont17_tr);
+                u8g2.drawXBMP(7, 19, 16, 16, image_microphone_bits);
                 u8g2.drawStr(33, 25, "RECORD");
-                u8g2.drawStr(34, 40, "AUDIO");
+                u8g2.drawStr(33, 40, "AUDIO");
                 u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawXBMP(9, 18, 15, 16, image_microphone_bits);
                 u8g2.drawEllipse(120, 34, 1, 3);
                 break;
             case 3:
                 u8g2.setFont(u8g2_font_profont17_tr);
+                u8g2.drawXBMP(7, 19, 16, 16, image_volume_loud_bits);
                 u8g2.drawStr(33, 20, "PLAY");
-                u8g2.drawStr(31, 36, "RECEIVED");
+                u8g2.drawStr(33, 36, "RECEIVED");
                 u8g2.drawLine(120, 8, 120, 54);
                 u8g2.drawEllipse(120, 48, 1, 3);
-                u8g2.drawXBMP(6, 20, 20, 16, image_volume_loud_bits);
-                u8g2.drawStr(31, 52, "AUDIO");
+                u8g2.drawStr(33, 52, "AUDIO");
                 break;
         }
     }
@@ -172,7 +178,7 @@ void UI::displayPasswordResult(bool correct) {
     if (correct) {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "CORRECT");
-        eventDispatcher->dispatchEvent({CHANGE_STATE, "OPEN"});
+//        eventDispatcher->dispatchEvent({CHANGE_STATE, "OPEN"});
     } else {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "WRONG");
@@ -183,15 +189,15 @@ void UI::displayPasswordResult(bool correct) {
 void UI::displayRecordingMessage() {
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(10, 32, "RECORDING...");
-    u8g2.drawStr(10, 47, "PRESS 1 TO STOP");
+    u8g2.drawStr(2, 32, "RECORDING...");
+    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
     u8g2.sendBuffer();
 }
 
 void UI::displayPlayingMessage() {
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(10, 32, "PLAYING...");
-    u8g2.drawStr(10, 47, "PRESS 1 TO STOP");
+    u8g2.drawStr(2, 32, "PLAYING...");
+    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
     u8g2.sendBuffer();
 }
