@@ -15,11 +15,13 @@ void LEDControl::begin(EventDispatcher &dispatcher) {
 }
 
 void LEDControl::turnOn() {
-    digitalWrite(_pin, HIGH);
+//    digitalWrite(_pin, HIGH);
     LOG_I(TAG, "LED turned on");
+    eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
 }
 
 void LEDControl::turnOff() {
     digitalWrite(_pin, LOW);
     LOG_I(TAG, "LED turned off");
+    eventDispatcher->dispatchEvent({LED_TURNED_OFF, ""});
 }

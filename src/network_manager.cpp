@@ -22,10 +22,8 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
 
     if (WiFiClass::status() == WL_CONNECTED) {
         LOG_I(TAG, "Connected to WiFi network");
-        eventDispatcher->dispatchEvent({WIFI_CONNECTED, ""});
     } else {
         LOG_E(TAG, "Failed to connect to WiFi network");
-        eventDispatcher->dispatchEvent({WIFI_DISCONNECTED, ""});
         return;
     }
 
@@ -37,7 +35,7 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
             NetworkManager::loop();
             vTaskDelay(10);
         }
-    }, "WiFi Task", 4096, this, 2, nullptr);
+    }, "WiFi Task", 8192, this, 2, nullptr);
 }
 
 
@@ -51,17 +49,14 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
     switch (type) {
         case WStype_DISCONNECTED:
             LOG_I(TAG, "WebSocket disconnected");
-            eventDispatcher->dispatchEvent({WEBSOCKET_DISCONNECTED, ""});
-            // Handle WebSocket disconnection (e.g., reattempt connection)
+            eventDispatcher->dispatchEvent({WS_DISCONNECTED, ""});
             break;
         case WStype_CONNECTED:
             LOG_I(TAG, "WebSocket connected");
-            eventDispatcher->dispatchEvent({WEBSOCKET_CONNECTED, ""});
+            eventDispatcher->dispatchEvent({WS_CONNECTED, ""});
             break;
         case WStype_TEXT: {
-
             DeserializationError error = deserializeJson(doc, payload, length);
-
             if (error) {
                 LOG_E(TAG, "Failed to parse JSON: %s", error.c_str());
                 return;
@@ -71,13 +66,18 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             LOG_I(TAG, "Received event: %s", event_type);
 
             if (strcmp(event_type, "start_recording") == 0) {
-                eventDispatcher->dispatchEvent({RECORD_START, "", 0});
+                eventDispatcher->dispatchEvent({CMD_RECORD_START, "", 0});
             } else if (strcmp(event_type, "stop_recording") == 0) {
-                eventDispatcher->dispatchEvent({RECORD_STOP, "", 0});
+                eventDispatcher->dispatchEvent({CMD_RECORD_STOP, "", 0});
             } else if (strcmp(event_type, "start_playing") == 0) {
-                eventDispatcher->dispatchEvent({PLAYBACK_START, "", 0});
+                eventDispatcher->dispatchEvent({CMD_PLAYBACK_START, "", 0});
             } else if (strcmp(event_type, "stop_playing") == 0) {
-                eventDispatcher->dispatchEvent({PLAYBACK_STOP, "", 0});
+                eventDispatcher->dispatchEvent({CMD_PLAYBACK_STOP, "", 0});
+            } else if (strcmp(event_type, "change_state") == 0) {
+                JsonObject data = doc["data"];
+                String jsonString;
+                serializeJson(data, jsonString);
+                eventDispatcher->dispatchEvent({CMD_CHANGE_STATE, jsonString.c_str()});
             }
             break;
         }
@@ -96,7 +96,6 @@ void NetworkManager::sendInitMessage() {
 
 void NetworkManager::sendAudioChunk(const uint8_t *data, size_t len) {
     webSocket.sendBIN(data, len);
-    LOG_I(TAG, "Sent audio chunk");
 }
 
 void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {

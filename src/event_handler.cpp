@@ -1,6 +1,7 @@
 #include "event_handler.h"
 #include "logger.h"
 #include "esp_now_manager.h"
+#include <ArduinoJson.h>
 
 static const char *TAG = "EventHandler";
 
@@ -8,19 +9,26 @@ EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &g
         : _audio(audio), _network(network), _gate(gate), _led(led) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
-    dispatcher.registerCallback(RECORD_START, [this](const Event &e) { handleRecordStart(e); });
-    dispatcher.registerCallback(RECORD_STOP, [this](const Event &e) { handleRecordStop(e); });
-    dispatcher.registerCallback(PLAYBACK_START, [this](const Event &e) { handlePlaybackStart(e); });
-    dispatcher.registerCallback(PLAYBACK_STOP, [this](const Event &e) { handlePlaybackStop(e); });
-    dispatcher.registerCallback(WEBSOCKET_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
+    dispatcher.registerCallback(CMD_RECORD_START, [this](const Event &e) { handleRecordStart(e); });
+    dispatcher.registerCallback(CMD_RECORD_STOP, [this](const Event &e) { handleRecordStop(e); });
+    dispatcher.registerCallback(CMD_PLAYBACK_START, [this](const Event &e) { handlePlaybackStart(e); });
+    dispatcher.registerCallback(CMD_PLAYBACK_STOP, [this](const Event &e) { handlePlaybackStop(e); });
+    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
     dispatcher.registerCallback(AUDIO_CHUNK_READ, [this](const Event &e) { handleAudioChunkRead(e); });
     dispatcher.registerCallback(FINGERPRINT_MATCH, [this](const Event &e) { handleFingerprintMatch(e); });
     dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
     dispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND,
                                 [this](const Event &e) { handleSendCaptureImageCommand(e); });
-    dispatcher.registerCallback(CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
+    dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
+    dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
+    dispatcher.registerCallback(GATE_CLOSED, [this](const Event &e) { handleChangeStateSuccess(e); });
+    dispatcher.registerCallback(LED_TURNED_ON, [this](const Event &e) { handleChangeStateSuccess(e); });
+    dispatcher.registerCallback(LED_TURNED_OFF, [this](const Event &e) { handleChangeStateSuccess(e); });
+    dispatcher.registerCallback(WS_DISCONNECTED, [this](const Event &e) { /* Handle WebSocket disconnected */ });
+
 }
+
 
 void EventHandler::handleRecordStart(const Event &event) {
     _audio.startRecording();
@@ -44,7 +52,6 @@ void EventHandler::handlePlaybackStop(const Event &event) {
 
 void EventHandler::handleWebSocketConnected(const Event &event) {
     _network.sendInitMessage();
-    LOG_I(TAG, "WebSocket connected, init message sent");
 }
 
 void EventHandler::handleAudioDataReceived(const Event &event) {
@@ -74,13 +81,37 @@ void EventHandler::handleSendCaptureImageCommand(const Event &event) {
 }
 
 void EventHandler::handleChangeState(const Event &event) {
-    if (event.data == "OPEN") {
-        _gate.openGate();
-        _led.turnOn();
-        LOG_I(TAG, "Gate opened and LED turned on");
-    } else if (event.data == "CLOSE") {
-        _gate.closeGate();
-        _led.turnOff();
-        LOG_I(TAG, "Gate closed and LED turned off");
+    StaticJsonDocument<256> doc;
+    DeserializationError error = deserializeJson(doc, event.data);
+
+    const char *device = doc["device"];
+    const char *state = doc["state"];
+
+    if (strcmp(device, "gate") == 0) {
+        strcmp(state, "open") == 0 ? _gate.openGate() : _gate.closeGate();
+    } else if (strcmp(device, "light") == 0) {
+        strcmp(state, "on") == 0 ? _led.turnOn() : _led.turnOff();
+    } else {
+        LOG_W(TAG, "Unknown device: %s", device);
     }
+}
+
+void EventHandler::handleChangeStateSuccess(const Event &event) {
+    StaticJsonDocument<256> data;
+
+    if (event.type == GATE_OPENED) {
+        data["device"] = "gate";
+        data["state"] = "open";
+    } else if (event.type == GATE_CLOSED) {
+        data["device"] = "gate";
+        data["state"] = "close";
+    } else if (event.type == LED_TURNED_ON) {
+        data["device"] = "light";
+        data["state"] = "on";
+    } else if (event.type == LED_TURNED_OFF) {
+        data["device"] = "light";
+        data["state"] = "off";
+    }
+
+    _network.sendEvent("change_state", data.as<JsonObject>());
 }

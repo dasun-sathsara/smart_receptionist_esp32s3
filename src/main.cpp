@@ -15,7 +15,7 @@
 #define LOG_BUFFER_SIZE 128
 
 // Define currentLogLevel
-LogLevel currentLogLevel = LOG_DEBUG;
+LogLevel currentLogLevel = LOG_INFO;
 
 // Define the logger function
 void logger(LogLevel level, const char *tag, const char *format, ...) {
@@ -40,12 +40,7 @@ static const char *TAG = "MAIN";
 
 void checkPSRAM() {
     if (psramFound()) {
-        size_t psramSize = ESP.getPsramSize();
-        size_t freePsram = ESP.getFreePsram();
-
         LOG_I(TAG, "PSRAM is available");
-        LOG_I(TAG, "Total PSRAM: %d bytes", psramSize);
-        LOG_I(TAG, "Free PSRAM: %d bytes", freePsram);
     } else {
         LOG_E(TAG, "PSRAM is not available or not initialized");
     }
@@ -64,6 +59,7 @@ Audio audio;
 EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl);
 
 void setup() {
+    eventHandler.registerCallbacks(eventDispatcher);
     Serial.begin(115200);
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
@@ -76,7 +72,6 @@ void setup() {
     checkPSRAM();
     ESPNow::begin(eventDispatcher);
 
-    eventHandler.registerCallbacks(eventDispatcher);
 
     LOG_I("MAIN", "System initialization complete");
 }

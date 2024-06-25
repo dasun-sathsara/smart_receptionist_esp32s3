@@ -167,18 +167,53 @@ private:
 #define EVENTS_H
 
 #include <functional>
-#include <unordered_map>
-#include <queue>
+#include <vector>
+#include <bitset>
+#include <cstdint>
+#include <string>
 
-enum EventType {
-    WIFI_CONNECTED,
-    WIFI_DISCONNECTED,
-    WEBSOCKET_CONNECTED,
-    WEBSOCKET_DISCONNECTED,
-    RECORD_START,
-    RECORD_STOP,
-    PLAYBACK_START,
-    PLAYBACK_STOP,
+// Increase or decrease this value based on the number of events you need
+constexpr size_t MAX_EVENTS = 64;
+
+using EventType = uint8_t;
+
+struct Event {
+    EventType type;
+    std::string data;
+    size_t dataLength;
+
+     Event(EventType t, const std::string &d = "", size_t s = 0)
+            : type(t), data(d), dataLength(s == 0 ? d.size() : s) {}
+};
+
+using EventCallback = std::function<void(const Event &)>;
+
+class EventDispatcher {
+public:
+    void registerCallback(EventType type, EventCallback callback);
+
+    void dispatchEvent(const Event &event);
+
+    void removeCallback(EventType type);
+
+private:
+    struct CallbackEntry {
+        EventType type;
+        EventCallback callback;
+    };
+
+    std::vector<CallbackEntry> callbacks;
+    std::bitset<MAX_EVENTS> registeredEvents;
+};
+
+// Define your event types here
+enum Events : EventType {
+    WS_CONNECTED = 0,
+    WS_DISCONNECTED,
+    CMD_RECORD_START,
+    CMD_RECORD_STOP,
+    CMD_PLAYBACK_START,
+    CMD_PLAYBACK_STOP,
     KEYPAD_PRESS,
     FINGERPRINT_MATCH,
     FINGERPRINT_NO_MATCH,
@@ -188,27 +223,12 @@ enum EventType {
     SEND_CAPTURE_IMAGE_COMMAND,
     MOTION_DETECTED,
     BREAK_BEAM_TRIGGERED,
-    CHANGE_STATE,
+    CMD_CHANGE_STATE,
     GATE_OPENED,
     GATE_CLOSED,
-};
+    LED_TURNED_ON,
+    LED_TURNED_OFF,
 
-struct Event {
-    EventType type;
-    std::string data;
-    size_t dataLength;
-};
-
-using EventCallback = std::function<void(const Event &)>;
-
-class EventDispatcher {
-public:
-    void registerCallback(EventType type, const EventCallback& callback);
-
-    void dispatchEvent(const Event &event);
-
-private:
-    std::unordered_map<EventType, std::vector<EventCallback>> callbacks;
 };
 
 #endif // EVENTS_H
@@ -221,32 +241,49 @@ private:
 #define EVENT_HANDLER_H
 
 #include "events.h"
+#include "audio.h"
+#include "network_manager.h"
+#include "gate_control.h"
+#include "led_control.h"
 
-// Callback function prototypes
-void handleRecordStart(const Event &event);
+class EventHandler {
+public:
+    EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led);
 
-void handleRecordStop(const Event &event);
+    void registerCallbacks(EventDispatcher &dispatcher);
 
-void handlePlaybackStart(const Event &event);
+private:
+    Audio &_audio;
+    NetworkManager &_network;
+    GateControl &_gate;
+    LEDControl &_led;
 
-void handlePlaybackStop(const Event &event);
+    void handleRecordStart(const Event &event);
 
-void handleWebSocketConnected(const Event &event);
+    void handleRecordStop(const Event &event);
 
-void handleAudioDataReceived(const Event &event);
+    void handlePlaybackStart(const Event &event);
 
-void handleAudioChunkRead(const Event &event);
+    void handlePlaybackStop(const Event &event);
 
-void handleFingerprintMatch(const Event &event);
+    void handleWebSocketConnected(const Event &event);
 
-void handleFingerprintNoMatch(const Event &event);
+    void handleAudioDataReceived(const Event &event);
 
-void handleSendCaptureImageCommand(const Event &event);
+    void handleAudioChunkRead(const Event &event);
 
-void handleChangeState(const Event &event);
+    void handleFingerprintMatch(const Event &event);
 
-#endif //EVENT_HANDLER_H
+    void handleFingerprintNoMatch(const Event &event);
 
+    void handleSendCaptureImageCommand(const Event &event);
+
+    void handleChangeState(const Event &event);
+
+    void handleChangeStateSuccess(const Event &event);
+};
+
+#endif // EVENT_HANDLER_H
 
 ###################################################
 
@@ -742,15 +779,58 @@ void ESPNow::onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 ############# src\events.cpp #############
 
 #include "events.h"
+#include "logger.h"
 
-void EventDispatcher::registerCallback(EventType type, const EventCallback& callback) {
-    callbacks[type].push_back(callback);
+static const char *TAG = "EventDispatcher";
+
+void EventDispatcher::registerCallback(EventType type, EventCallback callback) {
+    if (type >= MAX_EVENTS) {
+        LOG_E(TAG, "Event type out of range: %d", type);
+        return;
+    }
+
+    callbacks.push_back({type, std::move(callback)});
+    registeredEvents.set(type);
+    LOG_D(TAG, "Registered callback for event type: %d", type);
 }
 
 void EventDispatcher::dispatchEvent(const Event &event) {
-    for (auto &callback: callbacks[event.type]) {
-        callback(event);
+    if (event.type >= MAX_EVENTS) {
+        LOG_E(TAG, "Invalid event type: %d", event.type);
+        return;
     }
+
+    if (!registeredEvents.test(event.type)) {
+        LOG_W(TAG, "No callbacks registered for event type: %d", event.type);
+        return;
+    }
+
+    LOG_D(TAG, "Dispatching event: %d, data size: %zu", event.type, event.dataLength);
+    for (const auto &entry: callbacks) {
+        if (entry.type == event.type) {
+            entry.callback(event);
+        }
+    }
+}
+
+void EventDispatcher::removeCallback(EventType type) {
+    if (type >= MAX_EVENTS) {
+        LOG_E(TAG, "Event type out of range: %d", type);
+        return;
+    }
+
+    callbacks.erase(
+            std::remove_if(callbacks.begin(), callbacks.end(),
+                           [type](const CallbackEntry &entry) { return entry.type == type; }),
+            callbacks.end()
+    );
+
+    if (callbacks.end() == std::find_if(callbacks.begin(), callbacks.end(),
+                                        [type](const CallbackEntry &entry) { return entry.type == type; })) {
+        registeredEvents.reset(type);
+    }
+
+    LOG_D(TAG, "Removed callback(s) for event type: %d", type);
 }
 
 ##########################################
@@ -758,68 +838,137 @@ void EventDispatcher::dispatchEvent(const Event &event) {
 ############# src\event_handler.cpp #############
 
 #include "event_handler.h"
+#include "logger.h"
+#include "esp_now_manager.h"
+#include <ArduinoJson.h>
 
-void handleRecordStart(const Event &event) {
-    Audio::startRecording();
+static const char *TAG = "EventHandler";
+
+EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led)
+        : _audio(audio), _network(network), _gate(gate), _led(led) {}
+
+void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
+    dispatcher.registerCallback(CMD_RECORD_START, [this](const Event &e) { handleRecordStart(e); });
+    dispatcher.registerCallback(CMD_RECORD_STOP, [this](const Event &e) { handleRecordStop(e); });
+    dispatcher.registerCallback(CMD_PLAYBACK_START, [this](const Event &e) { handlePlaybackStart(e); });
+    dispatcher.registerCallback(CMD_PLAYBACK_STOP, [this](const Event &e) { handlePlaybackStop(e); });
+    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
+    dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
+    dispatcher.registerCallback(AUDIO_CHUNK_READ, [this](const Event &e) { handleAudioChunkRead(e); });
+    dispatcher.registerCallback(FINGERPRINT_MATCH, [this](const Event &e) { handleFingerprintMatch(e); });
+    dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
+    dispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND,
+                                [this](const Event &e) { handleSendCaptureImageCommand(e); });
+    dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
+    dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
+    dispatcher.registerCallback(GATE_CLOSED, [this](const Event &e) { handleChangeStateSuccess(e); });
+    dispatcher.registerCallback(LED_TURNED_ON, [this](const Event &e) { handleChangeStateSuccess(e); });
+    dispatcher.registerCallback(LED_TURNED_OFF, [this](const Event &e) { handleChangeStateSuccess(e); });
+    dispatcher.registerCallback(WS_DISCONNECTED, [this](const Event &e) { /* Handle WebSocket disconnected */ });
+
+}
+
+
+void EventHandler::handleRecordStart(const Event &event) {
+    _audio.startRecording();
     LOG_I(TAG, "Recording started");
 }
 
-void handleRecordStop(const Event &event) {
-    Audio::stopRecording();
+void EventHandler::handleRecordStop(const Event &event) {
+    _audio.stopRecording();
     LOG_I(TAG, "Recording stopped");
 }
 
-void handlePlaybackStart(const Event &event) {
-    Audio::startPlayback();
+void EventHandler::handlePlaybackStart(const Event &event) {
+    _audio.startPlayback();
     LOG_I(TAG, "Playback started");
 }
 
-void handlePlaybackStop(const Event &event) {
-    Audio::stopPlayback();
+void EventHandler::handlePlaybackStop(const Event &event) {
+    _audio.stopPlayback();
     LOG_I(TAG, "Playback stopped");
 }
 
-void handleWebSocketConnected(const Event &event) {
-    NetworkManager::sendInitMessage();
-    LOG_I(TAG, "WebSocket connected, init message sent");
+void EventHandler::handleWebSocketConnected(const Event &event) {
+    _network.sendInitMessage();
 }
 
-void handleAudioDataReceived(const Event &event) {
-    Audio::addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+void EventHandler::handleAudioDataReceived(const Event &event) {
+    _audio.addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
     LOG_D(TAG, "Audio data received and added to buffer");
 }
 
-void handleAudioChunkRead(const Event &event) {
-    NetworkManager::sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+void EventHandler::handleAudioChunkRead(const Event &event) {
+    _network.sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
     LOG_D(TAG, "Audio chunk read and sent");
 }
 
-void handleFingerprintMatch(const Event &event) {
+void EventHandler::handleFingerprintMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint match found!");
-//    gateControl.openGate();
-//    ledControl.turnOn();
+    _gate.openGate();
+    _led.turnOn();
 }
 
-void handleFingerprintNoMatch(const Event &event) {
+void EventHandler::handleFingerprintNoMatch(const Event &event) {
     LOG_I(TAG, "Fingerprint no match found!");
-//    ledControl.turnOff();
+    _led.turnOff();
 }
 
-void handleSendCaptureImageCommand(const Event &event) {
+void EventHandler::handleSendCaptureImageCommand(const Event &event) {
     ESPNow::sendCommand("capture_image");
     LOG_I(TAG, "Capture image command sent");
 }
 
-void handleChangeState(const Event &event) {
-    if (event.data == "OPEN") {
-        gateControl.openGate();
-        ledControl.turnOn();
-        LOG_I(TAG, "Gate opened and LED turned on");
-    } else if (event.data == "CLOSE") {
-        gateControl.closeGate();
-        ledControl.turnOff();
-        LOG_I(TAG, "Gate closed and LED turned off");
+void EventHandler::handleChangeState(const Event &event) {
+    StaticJsonDocument<256> doc;
+    DeserializationError error = deserializeJson(doc, event.data);
+    if (error) {
+        LOG_E(TAG, "Failed to parse JSON: %s", error.c_str());
+        return;
     }
+
+    const char *device = doc["data"]["device"];
+    const char *state = doc["data"]["state"];
+
+    if (device && state) {
+        if (strcmp(device, "gate") == 0) {
+            if (strcmp(state, "open") == 0) {
+                _gate.openGate();
+            } else if (strcmp(state, "close") == 0) {
+                _gate.closeGate();
+            }
+        } else if (strcmp(device, "light") == 0) {
+            if (strcmp(state, "on") == 0) {
+                _led.turnOn();
+            } else if (strcmp(state, "off") == 0) {
+                _led.turnOff();
+            }
+        } else {
+            LOG_W(TAG, "Unknown device: %s", device);
+        }
+    } else {
+        LOG_E(TAG, "Invalid change state command format");
+    }
+}
+
+void EventHandler::handleChangeStateSuccess(const Event &event) {
+    StaticJsonDocument<256> data;
+
+    if (event.type == GATE_OPENED) {
+        data["device"] = "gate";
+        data["state"] = "open";
+    } else if (event.type == GATE_CLOSED) {
+        data["device"] = "gate";
+        data["state"] = "close";
+    } else if (event.type == LED_TURNED_ON) {
+        data["device"] = "led";
+        data["state"] = "on";
+    } else if (event.type == LED_TURNED_OFF) {
+        data["device"] = "led";
+        data["state"] = "off";
+    }
+
+    _network.sendEvent("state_changed", data.as<JsonObject>());
 }
 
 #################################################
@@ -1019,11 +1168,13 @@ void LEDControl::begin(EventDispatcher &dispatcher) {
 void LEDControl::turnOn() {
     digitalWrite(_pin, HIGH);
     LOG_I(TAG, "LED turned on");
+    eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
 }
 
 void LEDControl::turnOff() {
     digitalWrite(_pin, LOW);
     LOG_I(TAG, "LED turned off");
+    eventDispatcher->dispatchEvent({LED_TURNED_OFF, ""});
 }
 
 ###############################################
@@ -1042,11 +1193,12 @@ void LEDControl::turnOff() {
 #include "sensors.h"
 #include "led_control.h"
 #include "config.h"
+#include "event_handler.h"
 
 #define LOG_BUFFER_SIZE 128
 
 // Define currentLogLevel
-LogLevel currentLogLevel = LOG_DEBUG;
+LogLevel currentLogLevel = LOG_INFO;
 
 // Define the logger function
 void logger(LogLevel level, const char *tag, const char *format, ...) {
@@ -1092,12 +1244,11 @@ PIRSensor pirSensor(PIR_PIN);
 BreakBeamSensor breakBeamSensor(BREAK_BEAM_PIN);
 LEDControl ledControl(LED_STRIP_PIN);
 Audio audio;
-
-
+EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl);
 
 void setup() {
+    eventHandler.registerCallbacks(eventDispatcher);
     Serial.begin(115200);
-
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
     audio.begin();
@@ -1106,29 +1257,14 @@ void setup() {
     pirSensor.begin(eventDispatcher);
     breakBeamSensor.begin(eventDispatcher);
     ledControl.begin(eventDispatcher);
-
     checkPSRAM();
-
     ESPNow::begin(eventDispatcher);
 
-    // Register callback functions with event dispatcher
-    eventDispatcher.registerCallback(RECORD_START, &handleRecordStart);
-    eventDispatcher.registerCallback(RECORD_STOP, &handleRecordStop);
-    eventDispatcher.registerCallback(PLAYBACK_START, &handlePlaybackStart);
-    eventDispatcher.registerCallback(PLAYBACK_STOP, &handlePlaybackStop);
-    eventDispatcher.registerCallback(WEBSOCKET_CONNECTED, &handleWebSocketConnected);
-    eventDispatcher.registerCallback(AUDIO_DATA_RECEIVED, &handleAudioDataReceived);
-    eventDispatcher.registerCallback(AUDIO_CHUNK_READ, &handleAudioChunkRead);
-    eventDispatcher.registerCallback(FINGERPRINT_MATCH, &handleFingerprintMatch);
-    eventDispatcher.registerCallback(FINGERPRINT_NO_MATCH, &handleFingerprintNoMatch);
-    eventDispatcher.registerCallback(SEND_CAPTURE_IMAGE_COMMAND, &handleSendCaptureImageCommand);
-    eventDispatcher.registerCallback(CHANGE_STATE, &handleChangeState);
 
-    LOG_I(TAG, "System initialization complete");
+    LOG_I("MAIN", "System initialization complete");
 }
 
 void loop() {
-    // No need to implement loop as FreeRTOS tasks are handling the logic
 }
 
 
@@ -1160,10 +1296,8 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
 
     if (WiFiClass::status() == WL_CONNECTED) {
         LOG_I(TAG, "Connected to WiFi network");
-        eventDispatcher->dispatchEvent({WIFI_CONNECTED, ""});
     } else {
         LOG_E(TAG, "Failed to connect to WiFi network");
-        eventDispatcher->dispatchEvent({WIFI_DISCONNECTED, ""});
         return;
     }
 
@@ -1189,12 +1323,11 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
     switch (type) {
         case WStype_DISCONNECTED:
             LOG_I(TAG, "WebSocket disconnected");
-            eventDispatcher->dispatchEvent({WEBSOCKET_DISCONNECTED, ""});
-            // Handle WebSocket disconnection (e.g., reattempt connection)
+            eventDispatcher->dispatchEvent({WS_DISCONNECTED, ""});
             break;
         case WStype_CONNECTED:
             LOG_I(TAG, "WebSocket connected");
-            eventDispatcher->dispatchEvent({WEBSOCKET_CONNECTED, ""});
+            eventDispatcher->dispatchEvent({WS_CONNECTED, ""});
             break;
         case WStype_TEXT: {
 
@@ -1209,13 +1342,16 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             LOG_I(TAG, "Received event: %s", event_type);
 
             if (strcmp(event_type, "start_recording") == 0) {
-                eventDispatcher->dispatchEvent({RECORD_START, "", 0});
+                eventDispatcher->dispatchEvent({CMD_RECORD_START, "", 0});
             } else if (strcmp(event_type, "stop_recording") == 0) {
-                eventDispatcher->dispatchEvent({RECORD_STOP, "", 0});
+                eventDispatcher->dispatchEvent({CMD_RECORD_STOP, "", 0});
             } else if (strcmp(event_type, "start_playing") == 0) {
-                eventDispatcher->dispatchEvent({PLAYBACK_START, "", 0});
+                eventDispatcher->dispatchEvent({CMD_PLAYBACK_START, "", 0});
             } else if (strcmp(event_type, "stop_playing") == 0) {
-                eventDispatcher->dispatchEvent({PLAYBACK_STOP, "", 0});
+                eventDispatcher->dispatchEvent({CMD_PLAYBACK_STOP, "", 0});
+            } else if (strcmp(event_type, "change_state") == 0) {
+                eventDispatcher->dispatchEvent(
+                        {CMD_CHANGE_STATE, std::string(reinterpret_cast<char *>(payload), length)});
             }
             break;
         }
