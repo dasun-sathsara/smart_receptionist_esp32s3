@@ -57,6 +57,7 @@ BreakBeamSensor breakBeamSensor(BREAK_BEAM_PIN);
 LEDControl ledControl(LED_STRIP_PIN);
 Audio audio;
 ESPNow espNow;
+
 EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl, ui, espNow);
 
 void setup() {
@@ -66,7 +67,7 @@ void setup() {
 
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
-    audio.begin();
+    audio.begin(eventDispatcher);
 //    fingerprintHandler.begin(eventDispatcher);
 //    gateControl.begin(eventDispatcher);
 //    pirSensor.begin(eventDispatcher);

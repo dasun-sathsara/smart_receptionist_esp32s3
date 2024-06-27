@@ -15,7 +15,6 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_STOP_PLAYING, [this](const Event &e) { handlePlaybackStop(e); });
     dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
-    dispatcher.registerCallback(AUDIO_CHUNK_READ, [this](const Event &e) { handleAudioChunkRead(e); });
     dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
     dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
     dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
@@ -56,12 +55,6 @@ void EventHandler::handleWebSocketConnected(const Event &event) {
 
 void EventHandler::handleAudioDataReceived(const Event &event) {
     audio.addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
-    LOG_D(TAG, "Audio data received and added to buffer");
-}
-
-void EventHandler::handleAudioChunkRead(const Event &event) {
-    network.sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
-    LOG_D(TAG, "Audio chunk read and sent");
 }
 
 void EventHandler::handleFingerprintMatch(const Event &event) {

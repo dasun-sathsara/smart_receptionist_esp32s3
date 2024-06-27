@@ -1,16 +1,16 @@
 ############# include\audio.h #############
 
-// audio.h
 #ifndef AUDIO_H
 #define AUDIO_H
 
 #include <Arduino.h>
 #include <driver/i2s.h>
+#include "freertos/ringbuf.h"
 #include "events.h"
 
 class Audio {
 public:
-     void begin();
+    void begin(EventDispatcher &dispatcher);
 
     static void startRecording();
 
@@ -23,15 +23,13 @@ public:
     static void addDataToBuffer(const uint8_t *data, size_t length);
 
 private:
-    [[noreturn]] static void i2sReaderTask(void *parameter);
+    static void i2sReaderTask(void *parameter);
 
-    [[noreturn]] static void i2sWriterTask(void *parameter);
+    static void i2sWriterTask(void *parameter);
 
-    static SemaphoreHandle_t i2sBufferMutex;
-    static uint8_t *i2sBuffer;
-    static size_t i2sBufferSize;
-    static volatile size_t i2sBufferHead;
-    static volatile size_t i2sBufferTail;
+    static EventDispatcher *eventDispatcher;
+    static RingbufHandle_t ringBuffer;
+
     static TaskHandle_t i2sReaderTaskHandle;
     static TaskHandle_t i2sWriterTaskHandle;
 
@@ -40,6 +38,9 @@ private:
     static const i2s_pin_config_t i2sPinConfigRx;
     static const i2s_config_t i2sConfigTx;
     static const i2s_pin_config_t i2sPinConfigTx;
+
+    static volatile bool isRecording;
+    static volatile bool isPlaying;
 };
 
 #endif // AUDIO_H
@@ -51,6 +52,7 @@ private:
 #ifndef CONFIG_H
 #define CONFIG_H
 
+#include <Arduino.h>
 #include "U8g2lib.h"
 
 // WiFi credentials
@@ -75,25 +77,27 @@ private:
 // LED strip configuration
 #define LED_STRIP_PIN 38
 
+// I2S configuration for INMP441 microphone
+#define I2S_MIC_SERIAL_CLOCK 40
+#define I2S_MIC_LEFT_RIGHT_CLOCK 41
+#define I2S_MIC_SERIAL_DATA 39
 
-// I2S configuration
-#define I2S_PIN_BCLK 13
-#define I2S_PIN_DATA 21
-#define I2S_PIN_LRCK 14
-
-#define I2S_PIN_INMP441_SD 39
-#define I2S_PIN_INMP441_WS 41
-#define I2S_PIN_INMP441_SCK 40
+// I2S configuration for MAX98357A amplifier
+#define I2S_SPEAKER_SERIAL_CLOCK 13
+#define I2S_SPEAKER_LEFT_RIGHT_CLOCK 14
+#define I2S_SPEAKER_SERIAL_DATA 21
 
 // Audio settings
-#define SAMPLE_RATE 44100
+#define SAMPLE_RATE 48000
 #define BITS_PER_SAMPLE 16
 #define CHANNELS 1
-#define DMA_BUF_COUNT 16
+
+// DMA buffer settings
+#define DMA_BUF_COUNT 8
 #define DMA_BUF_LEN 1024
 
-// Buffer sizes
-#define I2S_BUFFER_SIZE (1024 * 8)
+// Ring buffer size (1MB)
+#define RING_BUF_SIZE (1024 * 1024)
 
 // Fingerprint sensor configuration
 #define FINGERPRINT_TX 17
@@ -107,23 +111,20 @@ private:
 // Define images
 static const unsigned char image_notification_bell_bits[]
         U8X8_PROGMEM = {0x88, 0x11, 0xc6, 0x63, 0x22, 0x44, 0x31, 0x88, 0x11, 0x88, 0x08, 0x10, 0x08, 0x10, 0x08, 0x10,
-                        0x08,
-                        0x10, 0x04, 0x20, 0x04, 0x20, 0x02, 0x40, 0xff, 0xff, 0x60, 0x06, 0xc0, 0x03, 0x00, 0x00};
+                        0x08, 0x10, 0x04, 0x20, 0x04, 0x20, 0x02, 0x40, 0xff, 0xff, 0x60, 0x06, 0xc0, 0x03, 0x00, 0x00};
+
 static const unsigned char image_device_lock_bits[]
         U8X8_PROGMEM = {0xf0, 0x01, 0x08, 0x02, 0xe4, 0x04, 0x12, 0x09, 0x0a, 0x0a, 0x0a, 0x0a, 0xfe, 0x0f, 0x03, 0x18,
-                        0xe5,
-                        0x14, 0x11, 0x11, 0x11, 0x11, 0xa1, 0x10, 0xa1, 0x10, 0x45, 0x14, 0x03, 0x18, 0xfe, 0x0f};
+                        0xe5, 0x14, 0x11, 0x11, 0x11, 0x11, 0xa1, 0x10, 0xa1, 0x10, 0x45, 0x14, 0x03, 0x18, 0xfe, 0x0f};
+
 static const unsigned char image_microphone_bits[]
         U8X8_PROGMEM = {0xc0, 0x01, 0xe0, 0x03, 0xa0, 0x02, 0xe0, 0x03, 0xa0, 0x02, 0xe0, 0x03, 0xa0, 0x02, 0xe0, 0x03,
-                        0xe8,
-                        0x0b, 0xc8, 0x09, 0x10, 0x04, 0xe0, 0x03, 0x80, 0x00, 0x80, 0x00, 0xe0, 0x03, 0x00, 0x00};
+                        0xe8, 0x0b, 0xc8, 0x09, 0x10, 0x04, 0xe0, 0x03, 0x80, 0x00, 0x80, 0x00, 0xe0, 0x03, 0x00, 0x00};
+
 static const unsigned char image_volume_loud_bits[]
         U8X8_PROGMEM = {0x80, 0x83, 0x00, 0x40, 0x02, 0x01, 0x20, 0x22, 0x02, 0x10, 0x42, 0x04, 0x0f, 0x8a, 0x04, 0x01,
-                        0x92,
-                        0x08, 0x01, 0x22, 0x09, 0x01, 0x22, 0x09, 0x01, 0x22, 0x09, 0x01, 0x92, 0x08, 0x0f, 0x8a, 0x04,
-                        0x10,
-                        0x42, 0x04, 0x20, 0x22, 0x02, 0x40, 0x02, 0x01, 0x80, 0x83, 0x00, 0x00, 0x00, 0x00};
-
+                        0x92, 0x08, 0x01, 0x22, 0x09, 0x01, 0x22, 0x09, 0x01, 0x22, 0x09, 0x01, 0x92, 0x08, 0x0f, 0x8a,
+                        0x04, 0x10, 0x42, 0x04, 0x20, 0x22, 0x02, 0x40, 0x02, 0x01, 0x80, 0x83, 0x00, 0x00, 0x00, 0x00};
 
 #endif // CONFIG_H
 
@@ -213,11 +214,9 @@ enum Events : EventType {
     CMD_STOP_RECORDING,
     CMD_START_PLAYING,
     CMD_STOP_PLAYING,
-    KEYPAD_PRESS,
     FINGERPRINT_MATCHED,
     FINGERPRINT_NO_MATCH,
     AUDIO_DATA_RECEIVED,
-    AUDIO_CHUNK_READ,
     ESPNOW_DATA_RECEIVED,
     MOTION_DETECTED,
     BREAK_BEAM_TRIGGERED,
@@ -571,15 +570,44 @@ private:
 #include "config.h"
 #include "network_manager.h"
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 
 static const char *TAG = "AUDIO";
+
+EventDispatcher *Audio::eventDispatcher = nullptr;
+RingbufHandle_t Audio::ringBuffer = nullptr;
+TaskHandle_t Audio::i2sReaderTaskHandle = nullptr;
+TaskHandle_t Audio::i2sWriterTaskHandle = nullptr;
+volatile bool Audio::isRecording = false;
+volatile bool Audio::isPlaying = false;
 
 const i2s_config_t Audio::i2sConfigRx = {
         .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_RX),
         .sample_rate = SAMPLE_RATE,
-        .bits_per_sample = (i2s_bits_per_sample_t) BITS_PER_SAMPLE,
+        .bits_per_sample = static_cast<i2s_bits_per_sample_t>(BITS_PER_SAMPLE),
         .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-        .communication_format = (i2s_comm_format_t) (I2S_COMM_FORMAT_STAND_I2S),
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = DMA_BUF_COUNT,
+        .dma_buf_len = DMA_BUF_LEN,
+        .use_apll = false,
+        .tx_desc_auto_clear = false,
+        .fixed_mclk = 0
+};
+
+const i2s_pin_config_t Audio::i2sPinConfigRx = {
+        .bck_io_num = I2S_MIC_SERIAL_CLOCK,
+        .ws_io_num = I2S_MIC_LEFT_RIGHT_CLOCK,
+        .data_out_num = I2S_PIN_NO_CHANGE,
+        .data_in_num = I2S_MIC_SERIAL_DATA
+};
+
+const i2s_config_t Audio::i2sConfigTx = {
+        .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_TX),
+        .sample_rate = SAMPLE_RATE,
+        .bits_per_sample = static_cast<i2s_bits_per_sample_t>(BITS_PER_SAMPLE),
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
         .dma_buf_count = DMA_BUF_COUNT,
         .dma_buf_len = DMA_BUF_LEN,
@@ -588,157 +616,123 @@ const i2s_config_t Audio::i2sConfigRx = {
         .fixed_mclk = 0
 };
 
-const i2s_pin_config_t Audio::i2sPinConfigRx = {
-        .bck_io_num = I2S_PIN_INMP441_SCK,
-        .ws_io_num = I2S_PIN_INMP441_WS,
-        .data_out_num = I2S_PIN_NO_CHANGE,
-        .data_in_num = I2S_PIN_INMP441_SD
-};
-
-const i2s_config_t Audio::i2sConfigTx = {
-        .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_TX),
-        .sample_rate = SAMPLE_RATE,
-        .bits_per_sample = (i2s_bits_per_sample_t) BITS_PER_SAMPLE,
-        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
-        .communication_format = (i2s_comm_format_t) (I2S_COMM_FORMAT_STAND_I2S),
-        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count = DMA_BUF_COUNT,
-        .dma_buf_len = DMA_BUF_LEN,
-        .use_apll = false
-};
-
 const i2s_pin_config_t Audio::i2sPinConfigTx = {
-        .bck_io_num = I2S_PIN_BCLK,
-        .ws_io_num = I2S_PIN_LRCK,
-        .data_out_num = I2S_PIN_DATA,
+        .bck_io_num = I2S_SPEAKER_SERIAL_CLOCK,
+        .ws_io_num = I2S_SPEAKER_LEFT_RIGHT_CLOCK,
+        .data_out_num = I2S_SPEAKER_SERIAL_DATA,
         .data_in_num = I2S_PIN_NO_CHANGE
 };
 
-SemaphoreHandle_t Audio::i2sBufferMutex = nullptr;
-uint8_t *Audio::i2sBuffer = nullptr;
-size_t Audio::i2sBufferSize = I2S_BUFFER_SIZE;
-volatile size_t Audio::i2sBufferHead = 0;
-volatile size_t Audio::i2sBufferTail = 0;
-TaskHandle_t Audio::i2sReaderTaskHandle = nullptr;
-TaskHandle_t Audio::i2sWriterTaskHandle = nullptr;
+void Audio::begin(EventDispatcher &dispatcher) {
+    eventDispatcher = &dispatcher;
 
-void Audio::begin() {
-    i2sBufferMutex = xSemaphoreCreateMutex();
-
-    // Allocate memory for the I2S buffer dynamically
-    i2sBuffer = (uint8_t *) malloc(i2sBufferSize * sizeof(uint8_t));
-
-    if (i2sBuffer == nullptr) {
-        ESP_LOGE(TAG, "Error allocating memory for I2S buffer!");
+    ringBuffer = xRingbufferCreateNoSplit(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
+    if (ringBuffer == nullptr) {
+        ESP_LOGE(TAG, "Failed to create ring buffer");
+        return;
     }
 
-    // Initialize I2S RX
-    if (i2s_driver_install(I2S_NUM_1, &i2sConfigRx, 0, nullptr) != ESP_OK) {
-        ESP_LOGE(TAG, "Error installing I2S RX driver!");
-    }
+    ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2sConfigRx, 0, nullptr));
+    ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, &i2sPinConfigRx));
 
-    i2s_set_pin(I2S_NUM_1, &i2sPinConfigRx);
-    i2s_zero_dma_buffer(I2S_NUM_1);
+    ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_1, &i2sConfigTx, 0, nullptr));
+    ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_1, &i2sPinConfigTx));
 
-    // Initialize I2S TX
-    if (i2s_driver_install(I2S_NUM_0, &i2sConfigTx, 0, nullptr) != ESP_OK) {
-        ESP_LOGE(TAG, "Error installing I2S TX driver!");
-    }
-    i2s_set_pin(I2S_NUM_0, &i2sPinConfigTx);
-    i2s_zero_dma_buffer(I2S_NUM_0);
+    xTaskCreatePinnedToCore(i2sReaderTask, "I2S Reader Task", 8192, nullptr, 5, &i2sReaderTaskHandle, 0);
+    xTaskCreatePinnedToCore(i2sWriterTask, "I2S Writer Task", 8192, nullptr, 5, &i2sWriterTaskHandle, 1);
 
-    xTaskCreatePinnedToCore(i2sReaderTask, "I2S Reader Task", 8192, nullptr, 2, &i2sReaderTaskHandle, 1);
-    xTaskCreatePinnedToCore(i2sWriterTask, "I2S Writer Task", 8192, nullptr, 3, &i2sWriterTaskHandle, 1);
+    // Initially suspend both tasks
+    vTaskSuspend(i2sReaderTaskHandle);
+    vTaskSuspend(i2sWriterTaskHandle);
 
-    vTaskSuspend(i2sReaderTaskHandle); // Initially suspend the reader task
-    vTaskSuspend(i2sWriterTaskHandle); // Initially suspend the writer task
+    ESP_LOGI(TAG, "Audio system initialized");
 }
 
 void Audio::startRecording() {
+    isRecording = true;
     vTaskResume(i2sReaderTaskHandle);
     ESP_LOGI(TAG, "Recording started");
 }
 
 void Audio::stopRecording() {
+    isRecording = false;
     vTaskSuspend(i2sReaderTaskHandle);
     ESP_LOGI(TAG, "Recording stopped");
 }
 
 void Audio::startPlayback() {
+    isPlaying = true;
     vTaskResume(i2sWriterTaskHandle);
     ESP_LOGI(TAG, "Playback started");
 }
 
 void Audio::stopPlayback() {
+    isPlaying = false;
     vTaskSuspend(i2sWriterTaskHandle);
-    ESP_LOGI(TAG, "Playback stopped");
 
     // Clear the I2S DMA buffer
-    i2s_zero_dma_buffer(I2S_NUM_0);
+    i2s_zero_dma_buffer(I2S_NUM_1);
 
-    // Clear the buffer when playback stops
-    if (xSemaphoreTake(i2sBufferMutex, portMAX_DELAY) == pdTRUE) {
-        i2sBufferHead = 0;
-        i2sBufferTail = 0;
-        xSemaphoreGive(i2sBufferMutex);
+    // Clear the ring buffer
+    size_t itemSize;
+    void *item;
+    while ((item = xRingbufferReceive(ringBuffer, &itemSize, 0)) != nullptr) {
+        vRingbufferReturnItem(ringBuffer, item);
     }
+
+    ESP_LOGI(TAG, "Playback stopped and buffers cleared");
 }
 
 void Audio::addDataToBuffer(const uint8_t *data, size_t length) {
-    if (xSemaphoreTake(i2sBufferMutex, portMAX_DELAY) == pdTRUE) {
-        for (size_t i = 0; i < length; i++) {
-            i2sBuffer[i2sBufferHead] = data[i];
-            i2sBufferHead = (i2sBufferHead + 1) % I2S_BUFFER_SIZE;
-            if (i2sBufferHead == i2sBufferTail) // Buffer overflow, discard oldest data
-            {
-                i2sBufferTail = (i2sBufferTail + 1) % I2S_BUFFER_SIZE;
-            }
-        }
-        xSemaphoreGive(i2sBufferMutex);
+    if (xRingbufferSend(ringBuffer, data, length, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Failed to add data to ring buffer");
     }
+
 }
 
-[[noreturn]] void Audio::i2sReaderTask(void *parameter) {
+void Audio::i2sReaderTask(void *parameter) {
     size_t bytesRead = 0;
+    const size_t bufferSize = DMA_BUF_LEN * 2;
+    auto *buffer = (uint8_t *) heap_caps_malloc(bufferSize, MALLOC_CAP_DMA);
+    auto *prependedBuffer = (uint8_t *) heap_caps_malloc(bufferSize + 6, MALLOC_CAP_DMA);
 
-    // Dynamically allocate i2SMicBuffer
-    auto *i2SMicBuffer = new uint8_t[DMA_BUF_LEN * 2];
-    auto *prependedBuffer = new uint8_t[DMA_BUF_LEN * 2 + 6];
+    if (!buffer || !prependedBuffer) {
+        ESP_LOGE(TAG, "Failed to allocate memory for audio buffers");
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    memcpy(prependedBuffer, "AUDIO:", 6);
 
     while (true) {
-        i2s_read(I2S_NUM_1, i2SMicBuffer, DMA_BUF_LEN * 2, &bytesRead, portMAX_DELAY); // Read from Microphone
-        if (bytesRead > 0) {
-            memcpy(prependedBuffer, "AUDIO:", 6);
-            memcpy(prependedBuffer + 6, i2SMicBuffer, bytesRead);
-
-            NetworkManager::sendAudioChunk(prependedBuffer, bytesRead + 6);
-
-
-//            Event event = {AUDIO_CHUNK_READ, std::string(reinterpret_cast<char *>(prependedBuffer)),
-//                           bytesRead + 6};
-//            eventDispatcher->dispatchEvent(event);
+        if (isRecording) {
+            ESP_ERROR_CHECK(i2s_read(I2S_NUM_0, buffer, bufferSize, &bytesRead, portMAX_DELAY));
+            if (bytesRead > 0) {
+                memcpy(prependedBuffer + 6, buffer, bytesRead);
+                NetworkManager::sendAudioChunk(prependedBuffer, bytesRead + 6);
+            }
         }
-
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    // Free allocated memory
-    delete[] i2SMicBuffer;
-    delete[] prependedBuffer;
+    heap_caps_free(buffer);
+    heap_caps_free(prependedBuffer);
 }
 
-[[noreturn]] void Audio::i2sWriterTask(void *parameter) {
+void Audio::i2sWriterTask(void *parameter) {
     size_t bytesWritten = 0;
-    for (;;) {
-        if (xSemaphoreTake(i2sBufferMutex, portMAX_DELAY) == pdTRUE) {
-            if (i2sBufferTail != i2sBufferHead) {
-                size_t bytesToWrite = (i2sBufferTail < i2sBufferHead) ? (i2sBufferHead - i2sBufferTail) : (
-                        I2S_BUFFER_SIZE - i2sBufferTail);
-                i2s_write(I2S_NUM_0, &i2sBuffer[i2sBufferTail], bytesToWrite, &bytesWritten, portMAX_DELAY);
-                i2sBufferTail = (i2sBufferTail + bytesWritten) % I2S_BUFFER_SIZE;
+    size_t itemSize = 0;
+    uint8_t *item = nullptr;
+
+    while (true) {
+        if (isPlaying) {
+            item = (uint8_t *) xRingbufferReceive(ringBuffer, &itemSize, pdMS_TO_TICKS(10));
+            if (item != nullptr) {
+                ESP_ERROR_CHECK(i2s_write(I2S_NUM_1, item, itemSize, &bytesWritten, portMAX_DELAY));
+                vRingbufferReturnItem(ringBuffer, item);
             }
-            xSemaphoreGive(i2sBufferMutex);
         }
-        vTaskDelay(10);
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
@@ -883,7 +877,6 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_STOP_PLAYING, [this](const Event &e) { handlePlaybackStop(e); });
     dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
-    dispatcher.registerCallback(AUDIO_CHUNK_READ, [this](const Event &e) { handleAudioChunkRead(e); });
     dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
     dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
     dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
@@ -924,12 +917,6 @@ void EventHandler::handleWebSocketConnected(const Event &event) {
 
 void EventHandler::handleAudioDataReceived(const Event &event) {
     audio.addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
-    LOG_D(TAG, "Audio data received and added to buffer");
-}
-
-void EventHandler::handleAudioChunkRead(const Event &event) {
-    network.sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
-    LOG_D(TAG, "Audio chunk read and sent");
 }
 
 void EventHandler::handleFingerprintMatch(const Event &event) {
@@ -992,209 +979,6 @@ void EventHandler::handleMotionDetected(const Event &event) {
 }
 
 
-#################################################
-
-############# src\fingerprint.cpp #############
-
-#include "fingerprint.h"
-#include "config.h"
-#include "logger.h"
-
-static const char *TAG = "FINGERPRINT";
-
-FingerprintHandler::FingerprintHandler(const HardwareSerial &serial) : mySerial(serial), fingerprint(&mySerial) {
-    mySerial.begin(57600, SERIAL_8N1, FINGERPRINT_RX, FINGERPRINT_TX);
-    fingerprint.begin(57600);
-}
-
-void FingerprintHandler::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-
-    if (fingerprint.verifyPassword()) {
-        LOG_I(TAG, "Found fingerprint sensor!");
-        fingerprint.getTemplateCount();
-        if (fingerprint.templateCount == 0) {
-            LOG_E(TAG, "No fingerprint templates found. Please enroll a fingerprint first.");
-        } else {
-            LOG_I(TAG, "Fingerprint templates found: %d", fingerprint.templateCount);
-        }
-    } else {
-        LOG_E(TAG, "Did not find fingerprint sensor :(");
-    }
-
-    xTaskCreate(fingerprintTask, "Fingerprint Task", 4096, this, 1, nullptr);
-}
-
-void FingerprintHandler::fingerprintTask(void *parameter) {
-    auto *handler = static_cast<FingerprintHandler *>(parameter);
-
-    while (true) {
-        uint8_t p = handler->fingerprint.getImage();
-        if (p == FINGERPRINT_OK) {
-            LOG_I(TAG, "Image taken");
-            p = handler->fingerprint.image2Tz();
-            if (p == FINGERPRINT_OK) {
-                LOG_I(TAG, "Image converted to template");
-                p = handler->fingerprint.fingerFastSearch();
-                if (p == FINGERPRINT_OK) {
-                    LOG_I(TAG, "Finger found!");
-                    handler->eventDispatcher->dispatchEvent({FINGERPRINT_MATCHED, ""});
-                } else if (p == FINGERPRINT_NOTFOUND) {
-                    LOG_I(TAG, "No match found");
-                    handler->eventDispatcher->dispatchEvent({FINGERPRINT_NO_MATCH, ""});
-                } else {
-                    LOG_E(TAG, "Finger search error: %d", p);
-                }
-            } else {
-                continue;
-            }
-        } else {
-            continue;
-        }
-        vTaskDelay(1000);
-    }
-}
-
-
-
-
-
-
-###############################################
-
-############# src\gate_control.cpp #############
-
-#include "gate_control.h"
-#include "logger.h"
-
-static const char *TAG = "GATE_CONTROL";
-
-EventDispatcher *GateControl::eventDispatcher = nullptr;
-volatile bool GateControl::_isGateOpen = false;
-SemaphoreHandle_t GateControl::_gateStateMutex = xSemaphoreCreateMutex(); // Initialize the mutex
-
-GateControl::GateControl(int motorPin1, int motorPin2, int enablePin)
-        : _motorPin1(motorPin1), _motorPin2(motorPin2), _enablePin(enablePin) {}
-
-void GateControl::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-    pinMode(_motorPin1, OUTPUT);
-    pinMode(_motorPin2, OUTPUT);
-    pinMode(_enablePin, OUTPUT);
-
-    xTaskCreate(gateControlTask, "Gate Control Task", 4096, this, 1, nullptr);
-
-    LOG_I(TAG, "Gate control initialized");
-}
-
-void GateControl::openGate() {
-    if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        if (!_isGateOpen && !_isMoving) { // Check if gate is closed and not moving
-            digitalWrite(_motorPin1, HIGH);
-            digitalWrite(_motorPin2, LOW);
-            digitalWrite(_enablePin, HIGH);
-            _movementStartTime = millis();
-            _isMoving = true;
-            LOG_I(TAG, "Gate opening started...");
-        } else {
-            LOG_I(TAG, "Gate is already open or in motion.");
-        }
-        xSemaphoreGive(_gateStateMutex);
-    }
-}
-
-void GateControl::closeGate() {
-    if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        if (_isGateOpen && !_isMoving) { // Check if gate is open and not moving
-            digitalWrite(_motorPin1, LOW);
-            digitalWrite(_motorPin2, HIGH);
-            digitalWrite(_enablePin, HIGH);
-            _movementStartTime = millis();
-            _isMoving = true;
-            LOG_I(TAG, "Gate closing started...");
-        } else {
-            LOG_I(TAG, "Gate is already closed or in motion.");
-        }
-        xSemaphoreGive(_gateStateMutex);
-    }
-}
-
-bool GateControl::isGateMoving() const {
-    return _isMoving;
-}
-
-// Make isGateOpen() non-const and protect with mutex
-bool GateControl::isGateOpen() {
-    if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        bool gateState = _isGateOpen;
-        xSemaphoreGive(_gateStateMutex);
-        return gateState;
-    } else {
-        // Handle mutex failure (e.g., return a default value)
-        return false;
-    }
-}
-
-void GateControl::gateControlTask(void *parameter) {
-    auto *gateControl = static_cast<GateControl *>(parameter);
-
-    while (true) {
-        if (gateControl->isGateMoving() && millis() - gateControl->_movementStartTime > 7000) {
-            digitalWrite(gateControl->_enablePin, LOW);
-            gateControl->_isMoving = false;
-
-            // Update _isGateOpen within the mutex
-            if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-                _isGateOpen = !_isGateOpen; // Toggle the state
-                xSemaphoreGive(_gateStateMutex);
-            }
-
-            // Dispatch events after updating _isGateOpen
-            if (_isGateOpen) {
-                eventDispatcher->dispatchEvent({GATE_OPENED, ""});
-            } else {
-                eventDispatcher->dispatchEvent({GATE_CLOSED, ""});
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(100));
-    }
-}
-
-
-################################################
-
-############# src\led_control.cpp #############
-
-#include "led_control.h"
-#include "logger.h"
-
-static const char *TAG = "LED_CONTROL";
-
-EventDispatcher *LEDControl::eventDispatcher = nullptr;
-
-LEDControl::LEDControl(int pin) : _pin(pin) {}
-
-void LEDControl::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-    pinMode(_pin, OUTPUT);
-    digitalWrite(_pin, LOW);
-    LOG_I(TAG, "LED control initialized");
-}
-
-void LEDControl::turnOn() {
-//    digitalWrite(_pin, HIGH);
-    LOG_I(TAG, "LED turned on");
-    eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
-}
-
-void LEDControl::turnOff() {
-    digitalWrite(_pin, LOW);
-    LOG_I(TAG, "LED turned off");
-    eventDispatcher->dispatchEvent({LED_TURNED_OFF, ""});
-}
-
-###############################################
-
 ############# src\main.cpp #############
 
 #include <Arduino.h>
@@ -1256,6 +1040,7 @@ BreakBeamSensor breakBeamSensor(BREAK_BEAM_PIN);
 LEDControl ledControl(LED_STRIP_PIN);
 Audio audio;
 ESPNow espNow;
+
 EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl, ui, espNow);
 
 void setup() {
@@ -1265,13 +1050,13 @@ void setup() {
 
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
-    audio.begin();
-    fingerprintHandler.begin(eventDispatcher);
-    gateControl.begin(eventDispatcher);
-    pirSensor.begin(eventDispatcher);
-    breakBeamSensor.begin(eventDispatcher);
-    ledControl.begin(eventDispatcher);
-    espNow.begin(eventDispatcher);
+    audio.begin(eventDispatcher);
+//    fingerprintHandler.begin(eventDispatcher);
+//    gateControl.begin(eventDispatcher);
+//    pirSensor.begin(eventDispatcher);
+//    breakBeamSensor.begin(eventDispatcher);
+//    ledControl.begin(eventDispatcher);
+//    espNow.begin(eventDispatcher);
 
     LOG_I("MAIN", "System initialization complete");
 }
@@ -1299,9 +1084,9 @@ WebSocketsClient NetworkManager::webSocket;
 
 void NetworkManager::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     int connectionAttempts = 0;
+
     while (WiFiClass::status() != WL_CONNECTED && connectionAttempts < 10) {
         delay(500);
         connectionAttempts++;
@@ -1325,14 +1110,11 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
     }, "WiFi Task", 8192, this, 2, nullptr);
 }
 
-
 void NetworkManager::loop() {
     webSocket.loop();
 }
 
 void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
-    StaticJsonDocument<200> doc;
-
     switch (type) {
         case WStype_DISCONNECTED:
             LOG_I(TAG, "WebSocket disconnected");
@@ -1342,22 +1124,25 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             eventDispatcher->dispatchEvent({WS_CONNECTED, ""});
             break;
         case WStype_TEXT: {
+            StaticJsonDocument<256> doc;
             DeserializationError error = deserializeJson(doc, payload, length);
+
             if (error) {
                 LOG_E(TAG, "Failed to parse JSON: %s", error.c_str());
                 return;
             }
 
             const char *event_type = doc["event_type"];
+            if (event_type == nullptr) {
+                LOG_E(TAG, "Invalid JSON: missing event_type");
+                return;
+            }
+
             LOG_I(TAG, "Received event: %s", event_type);
 
-            // Log the entire JSON payload
-            String jsonString;
-            serializeJson(doc, jsonString);
-            LOG_I(TAG, "Received JSON: %s", jsonString.c_str());
-
             if (strcmp(event_type, "audio") == 0) {
-                const char *action = doc["action"];
+                JsonObject data = doc["data"];
+                const char *action = data["action"];
 
                 if (strcmp(action, "start_recording") == 0) {
                     eventDispatcher->dispatchEvent({CMD_START_RECORDING, ""});
@@ -1367,23 +1152,34 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                     eventDispatcher->dispatchEvent({CMD_START_PLAYING, ""});
                 } else if (strcmp(action, "stop_playing") == 0) {
                     eventDispatcher->dispatchEvent({CMD_STOP_PLAYING, ""});
+                } else {
+                    LOG_W(TAG, "Unknown audio action: %s", action);
                 }
             } else if (strcmp(event_type, "change_state") == 0) {
                 JsonObject data = doc["data"];
-                String jsonString;
-                serializeJson(data, jsonString);
-                eventDispatcher->dispatchEvent({CMD_CHANGE_STATE, jsonString.c_str()});
+                if (!data.isNull()) {
+                    String dataString;
+                    serializeJson(data, dataString);
+                    eventDispatcher->dispatchEvent({CMD_CHANGE_STATE, dataString.c_str()});
+                } else {
+                    LOG_E(TAG, "Invalid change_state event: missing data");
+                }
             } else if (strcmp(event_type, "grant_access") == 0) {
-                eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, "", 0});
+                eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, ""});
             } else if (strcmp(event_type, "deny_access") == 0) {
-                eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, "", 0});
+                eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, ""});
+            } else {
+                LOG_W(TAG, "Unknown event type: %s", event_type);
             }
             break;
         }
         case WStype_BIN: {
-        }
             Event event = {AUDIO_DATA_RECEIVED, std::string(reinterpret_cast<char *>(payload), length), length};
             eventDispatcher->dispatchEvent(event);
+            break;
+        }
+        default:
+            LOG_W(TAG, "Unhandled WebSocket event type: %d", type);
             break;
     }
 }
@@ -1401,354 +1197,10 @@ void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
     StaticJsonDocument<256> doc;
     doc["event_type"] = eventType;
     doc["data"] = data;
-
     char buffer[256];
     size_t length = serializeJson(doc, buffer);
-
     webSocket.sendTXT(buffer, length);
     LOG_I(TAG, "Sent event: %s", eventType);
 }
 
 ###################################################
-
-############# src\sensors.cpp #############
-
-#include "sensors.h"
-#include "logger.h"
-
-static const char *TAG_PIR = "PIR_SENSOR";
-static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
-
-// PIR Sensor Implementation
-EventDispatcher *PIRSensor::eventDispatcher = nullptr;
-
-PIRSensor::PIRSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(LOW), _state(LOW) {}
-
-void PIRSensor::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-    pinMode(_pin, INPUT);
-    xTaskCreate(pirTask, "PIR Sensor Task", 2048, this, 1, nullptr);
-    LOG_I(TAG_PIR, "PIR sensor initialized");
-}
-
-void PIRSensor::pirTask(void *parameter) {
-    auto *pirSensor = static_cast<PIRSensor *>(parameter);
-    const unsigned long debounceDelay = 50; // 50ms debounce time
-    const unsigned long cooldownTime = 60000; // 1 minute cooldown
-    unsigned long lastTriggerTime = 0;
-
-    while (true) {
-        int reading = digitalRead(pirSensor->_pin);
-
-        if (reading != pirSensor->_lastState) {
-            pirSensor->_lastDebounceTime = millis();
-        }
-
-        if ((millis() - pirSensor->_lastDebounceTime) > debounceDelay) {
-            if (reading != pirSensor->_state) {
-                pirSensor->_state = reading;
-
-                if (pirSensor->_state == HIGH && (millis() - lastTriggerTime) > cooldownTime) {
-                    LOG_I(TAG_PIR, "Motion detected");
-                    eventDispatcher->dispatchEvent({MOTION_DETECTED, ""});
-                    lastTriggerTime = millis();
-                }
-            }
-        }
-
-        pirSensor->_lastState = reading;
-        vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
-    }
-}
-
-// Break Beam Sensor Implementation
-EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
-
-BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(HIGH), _state(HIGH) {}
-
-void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-    pinMode(_pin, INPUT_PULLUP);
-    xTaskCreate(breakBeamTask, "Break Beam Sensor Task", 2048, this, 1, nullptr);
-    LOG_I(TAG_BREAK_BEAM, "Break beam sensor initialized");
-}
-
-void BreakBeamSensor::breakBeamTask(void *parameter) {
-    auto *breakBeamSensor = static_cast<BreakBeamSensor *>(parameter);
-    const unsigned long debounceDelay = 50; // 50ms debounce time
-
-    while (true) {
-        int reading = digitalRead(breakBeamSensor->_pin);
-
-        if (reading != breakBeamSensor->_lastState) {
-            breakBeamSensor->_lastDebounceTime = millis();
-        }
-
-        if ((millis() - breakBeamSensor->_lastDebounceTime) > debounceDelay) {
-            if (reading != breakBeamSensor->_state) {
-                breakBeamSensor->_state = reading;
-
-                if (breakBeamSensor->_state == LOW) {
-                    LOG_I(TAG_BREAK_BEAM, "Break beam triggered");
-                    eventDispatcher->dispatchEvent({BREAK_BEAM_TRIGGERED, ""});
-                }
-            }
-        }
-
-        breakBeamSensor->_lastState = reading;
-        vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
-    }
-}
-
-###########################################
-
-############# src\ui.cpp #############
-
-#include "ui.h"
-#include "config.h"
-#include "logger.h"
-#include <Wire.h>
-
-static const char *TAG = "UI";
-
-// Define keypad size
-const byte ROWS = 4;
-const byte COLS = 3;
-
-char hexaKeys[ROWS][COLS] = {
-        {'1', '2', '3',},
-        {'4', '5', '6',},
-        {'7', '8', '9',},
-        {'*', '0', '#',}
-};
-byte rowPins[ROWS] = {4, 5, 6, 7};
-byte colPins[COLS] = {15, 16, 17};
-
-const char *UI::menuItems[] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY RECEIVED AUDIO"};
-const int UI::menuItemCount = sizeof(menuItems) / sizeof(menuItems[0]);
-const char UI::correctPassword[] = "1234";
-
-EventDispatcher *UI::eventDispatcher = nullptr;
-
-UI::UI() : u8g2(U8G2_R0, U8X8_PIN_NONE),
-           keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS),
-           currentMenuItem(0),
-           notificationDisplayed(false),
-           enteringPassword(false),
-           passwordCorrect(false),
-           passwordChecked(false),
-           recordingAudio(false),
-           playingAudio(false),
-           passwordIndex(0) {
-
-    memset(enteredPassword, 0, sizeof(enteredPassword));
-}
-
-void UI::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-    Wire.begin(SDA_PIN, SCL_PIN);
-    u8g2.setBusClock(400000);  // Set I2C clock speed to 400kHz
-    u8g2.setI2CAddress(I2C_ADDRESS * 2);
-    u8g2.begin();
-    xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
-    LOG_I(TAG, "UI initialized");
-}
-
-void UI::uiTask(void *parameter) {
-    UI *ui = static_cast<UI *>(parameter);
-    while (true) {
-        ui->update();
-        vTaskDelay(pdMS_TO_TICKS(500)); // Update every 500ms
-    }
-}
-
-void UI::update() {
-    char key = keypad.getKey();
-    if (key) {
-        LOG_I(TAG, "Key pressed: %c", key);
-        handleKeyPress(key);
-    }
-    displayMenu();
-}
-
-void UI::handleKeyPress(char key) {
-    if (enteringPassword) {
-        if (key >= '0' && key <= '9' && passwordIndex < 4) {
-            enteredPassword[passwordIndex++] = key;
-            enteredPassword[passwordIndex] = '\0';
-        } else if (key == '*') {
-            passwordIndex = 0;
-            enteredPassword[0] = '\0';
-        } else if (key == '#') {
-            passwordCorrect = (strcmp(enteredPassword, correctPassword) == 0);
-            passwordChecked = true;
-            enteringPassword = false;
-            displayPasswordResult(passwordCorrect);
-            vTaskDelay(pdMS_TO_TICKS(2000));
-            passwordChecked = false;
-            passwordIndex = 0;
-            enteredPassword[0] = '\0';
-        }
-    } else if (recordingAudio || playingAudio) {
-        if (key == '1') {
-            recordingAudio = false;
-            playingAudio = false;
-        }
-    } else {
-        switch (key) {
-            case '2':
-                currentMenuItem = (currentMenuItem - 1 + menuItemCount) % menuItemCount;
-                notificationDisplayed = false;
-                break;
-            case '8':
-                currentMenuItem = (currentMenuItem + 1) % menuItemCount;
-                notificationDisplayed = false;
-                break;
-            case '5':
-                if (currentMenuItem == 0) {
-                    notificationDisplayed = true;
-//                    eventDispatcher->dispatchEvent({EN_CMD_CAPTURE_IMAGE, ""});
-                } else if (currentMenuItem == 1) {
-                    enteringPassword = true;
-                } else if (currentMenuItem == 2) {
-                    recordingAudio = true;
-//                    eventDispatcher->dispatchEvent({RECORD_START, ""});
-                } else if (currentMenuItem == 3) {
-                    playingAudio = true;
-//                    eventDispatcher->dispatchEvent({PLAYBACK_START, ""});
-                }
-                break;
-        }
-    }
-}
-
-void UI::displayMenu() {
-    u8g2.clearBuffer();
-
-    if (notificationDisplayed && currentMenuItem == 0) {
-        u8g2.setFont(u8g2_font_profont17_tr);
-        u8g2.drawStr(15, 32, "OWNER HAS BEEN");
-        u8g2.drawStr(35, 47, "NOTIFIED");
-    } else if (enteringPassword && currentMenuItem == 1) {
-        u8g2.setFont(u8g2_font_profont17_tr);
-        u8g2.drawStr(15, 32, "ENTER PASSWORD");
-        u8g2.drawStr(35, 47, enteredPassword);
-    } else if (recordingAudio && currentMenuItem == 2) {
-        displayRecordingMessage();
-    } else if (playingAudio && currentMenuItem == 3) {
-        displayPlayingMessage();
-    } else {
-        switch (currentMenuItem) {
-            case 0:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_notification_bell_bits);
-                u8g2.drawStr(33, 25, "NOTIFY");
-                u8g2.drawStr(33, 40, "OWNER");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 12, 1, 3);
-                break;
-            case 1:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_device_lock_bits);
-                u8g2.drawStr(33, 25, "ENTER");
-                u8g2.drawStr(33, 40, "PASSWORD");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 21, 1, 3);
-                break;
-            case 2:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_microphone_bits);
-                u8g2.drawStr(33, 25, "RECORD");
-                u8g2.drawStr(33, 40, "AUDIO");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 34, 1, 3);
-                break;
-            case 3:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_volume_loud_bits);
-                u8g2.drawStr(33, 20, "PLAY");
-                u8g2.drawStr(33, 36, "RECEIVED");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 48, 1, 3);
-                u8g2.drawStr(33, 52, "AUDIO");
-                break;
-        }
-    }
-
-    u8g2.sendBuffer();
-}
-
-void UI::displayPasswordResult(bool correct) {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    if (correct) {
-        u8g2.drawStr(40, 32, "PASSWORD");
-        u8g2.drawStr(50, 47, "CORRECT");
-        eventDispatcher->dispatchEvent({PASSWORD_VALIDATED, ""});
-    } else {
-        u8g2.drawStr(40, 32, "PASSWORD");
-        u8g2.drawStr(50, 47, "WRONG");
-    }
-    u8g2.sendBuffer();
-}
-
-void UI::displayRecordingMessage() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(2, 32, "RECORDING...");
-    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
-    u8g2.sendBuffer();
-}
-
-void UI::displayPlayingMessage() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(2, 32, "PLAYING...");
-    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
-    u8g2.sendBuffer();
-}
-
-void UI::displayAccessGranted() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "ACCESS");
-    u8g2.drawStr(50, 47, "GRANTED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayAccessDenied() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "ACCESS");
-    u8g2.drawStr(50, 47, "DENIED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayMotionDetected() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "MOTION");
-    u8g2.drawStr(50, 47, "DETECTED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayFingerprintMatched() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "FINGERPRINT");
-    u8g2.drawStr(50, 47, "MATCHED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayFingerprintNoMatch() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "FINGERPRINT");
-    u8g2.drawStr(50, 47, "NO MATCH");
-    u8g2.sendBuffer();
-}
-
-
-
-######################################
-
