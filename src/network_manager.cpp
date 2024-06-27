@@ -12,9 +12,9 @@ WebSocketsClient NetworkManager::webSocket;
 
 void NetworkManager::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     int connectionAttempts = 0;
+
     while (WiFiClass::status() != WL_CONNECTED && connectionAttempts < 10) {
         delay(500);
         connectionAttempts++;
@@ -38,14 +38,11 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
     }, "WiFi Task", 8192, this, 2, nullptr);
 }
 
-
 void NetworkManager::loop() {
     webSocket.loop();
 }
 
 void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
-    StaticJsonDocument<200> doc;
-
     switch (type) {
         case WStype_DISCONNECTED:
             LOG_I(TAG, "WebSocket disconnected");
@@ -55,39 +52,62 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             eventDispatcher->dispatchEvent({WS_CONNECTED, ""});
             break;
         case WStype_TEXT: {
+            StaticJsonDocument<256> doc;
             DeserializationError error = deserializeJson(doc, payload, length);
+
             if (error) {
                 LOG_E(TAG, "Failed to parse JSON: %s", error.c_str());
                 return;
             }
 
             const char *event_type = doc["event_type"];
+            if (event_type == nullptr) {
+                LOG_E(TAG, "Invalid JSON: missing event_type");
+                return;
+            }
+
             LOG_I(TAG, "Received event: %s", event_type);
 
-            if (strcmp(event_type, "start_recording") == 0) {
-                eventDispatcher->dispatchEvent({CMD_RECORD_START, "", 0});
-            } else if (strcmp(event_type, "stop_recording") == 0) {
-                eventDispatcher->dispatchEvent({CMD_RECORD_STOP, "", 0});
-            } else if (strcmp(event_type, "start_playing") == 0) {
-                eventDispatcher->dispatchEvent({CMD_PLAYBACK_START, "", 0});
-            } else if (strcmp(event_type, "stop_playing") == 0) {
-                eventDispatcher->dispatchEvent({CMD_PLAYBACK_STOP, "", 0});
+            if (strcmp(event_type, "audio") == 0) {
+                JsonObject data = doc["data"];
+                const char *action = data["action"];
+
+                if (strcmp(action, "start_recording") == 0) {
+                    eventDispatcher->dispatchEvent({CMD_START_RECORDING, ""});
+                } else if (strcmp(action, "stop_recording") == 0) {
+                    eventDispatcher->dispatchEvent({CMD_STOP_RECORDING, ""});
+                } else if (strcmp(action, "start_playing") == 0) {
+                    eventDispatcher->dispatchEvent({CMD_START_PLAYING, ""});
+                } else if (strcmp(action, "stop_playing") == 0) {
+                    eventDispatcher->dispatchEvent({CMD_STOP_PLAYING, ""});
+                } else {
+                    LOG_W(TAG, "Unknown audio action: %s", action);
+                }
             } else if (strcmp(event_type, "change_state") == 0) {
                 JsonObject data = doc["data"];
-                String jsonString;
-                serializeJson(data, jsonString);
-                eventDispatcher->dispatchEvent({CMD_CHANGE_STATE, jsonString.c_str()});
+                if (!data.isNull()) {
+                    String dataString;
+                    serializeJson(data, dataString);
+                    eventDispatcher->dispatchEvent({CMD_CHANGE_STATE, dataString.c_str()});
+                } else {
+                    LOG_E(TAG, "Invalid change_state event: missing data");
+                }
             } else if (strcmp(event_type, "grant_access") == 0) {
-                eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, "", 0});
+                eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, ""});
             } else if (strcmp(event_type, "deny_access") == 0) {
-                eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, "", 0});
+                eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, ""});
+            } else {
+                LOG_W(TAG, "Unknown event type: %s", event_type);
             }
             break;
         }
         case WStype_BIN: {
-        }
             Event event = {AUDIO_DATA_RECEIVED, std::string(reinterpret_cast<char *>(payload), length), length};
             eventDispatcher->dispatchEvent(event);
+            break;
+        }
+        default:
+            LOG_W(TAG, "Unhandled WebSocket event type: %d", type);
             break;
     }
 }
@@ -105,10 +125,8 @@ void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
     StaticJsonDocument<256> doc;
     doc["event_type"] = eventType;
     doc["data"] = data;
-
     char buffer[256];
     size_t length = serializeJson(doc, buffer);
-
     webSocket.sendTXT(buffer, length);
     LOG_I(TAG, "Sent event: %s", eventType);
 }

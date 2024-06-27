@@ -4,8 +4,8 @@
 #include "U8g2lib.h"
 
 // WiFi credentials
-#define WIFI_SSID "Netgear Fiber"
-#define WIFI_PASSWORD "Mqwmu2fCakcRRmW"
+#define WIFI_SSID "Xperia 1 II"
+#define WIFI_PASSWORD "12345678"
 
 // WebSocket server details
 #define WS_SERVER "192.168.8.35"
@@ -20,7 +20,7 @@
 #define PIR_PIN 21
 
 // Break beam sensor configuration
-#define BREAK_BEAM_PIN 39
+#define BREAK_BEAM_PIN 2
 
 // LED strip configuration
 #define LED_STRIP_PIN 38
@@ -28,12 +28,12 @@
 
 // I2S configuration
 #define I2S_PIN_BCLK 13
-#define I2S_PIN_DATA 15
-#define I2S_PIN_LRCK 12
+#define I2S_PIN_DATA 21
+#define I2S_PIN_LRCK 14
 
-#define I2S_PIN_INMP441_SD 5
-#define I2S_PIN_INMP441_WS 11
-#define I2S_PIN_INMP441_SCK 12
+#define I2S_PIN_INMP441_SD 39
+#define I2S_PIN_INMP441_WS 41
+#define I2S_PIN_INMP441_SCK 40
 
 // Audio settings
 #define SAMPLE_RATE 44100

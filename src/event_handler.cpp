@@ -9,10 +9,10 @@ EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &g
         : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
-    dispatcher.registerCallback(CMD_RECORD_START, [this](const Event &e) { handleRecordStart(e); });
-    dispatcher.registerCallback(CMD_RECORD_STOP, [this](const Event &e) { handleRecordStop(e); });
-    dispatcher.registerCallback(CMD_PLAYBACK_START, [this](const Event &e) { handlePlaybackStart(e); });
-    dispatcher.registerCallback(CMD_PLAYBACK_STOP, [this](const Event &e) { handlePlaybackStop(e); });
+    dispatcher.registerCallback(CMD_START_RECORDING, [this](const Event &e) { handleRecordStart(e); });
+    dispatcher.registerCallback(CMD_STOP_RECORDING, [this](const Event &e) { handleRecordStop(e); });
+    dispatcher.registerCallback(CMD_START_PLAYING, [this](const Event &e) { handlePlaybackStart(e); });
+    dispatcher.registerCallback(CMD_STOP_PLAYING, [this](const Event &e) { handlePlaybackStop(e); });
     dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
     dispatcher.registerCallback(AUDIO_CHUNK_READ, [this](const Event &e) { handleAudioChunkRead(e); });

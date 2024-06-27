@@ -54,8 +54,8 @@ private:
 #include "U8g2lib.h"
 
 // WiFi credentials
-#define WIFI_SSID "Netgear Fiber"
-#define WIFI_PASSWORD "Mqwmu2fCakcRRmW"
+#define WIFI_SSID "Xperia 1 II"
+#define WIFI_PASSWORD "12345678"
 
 // WebSocket server details
 #define WS_SERVER "192.168.8.35"
@@ -70,7 +70,7 @@ private:
 #define PIR_PIN 21
 
 // Break beam sensor configuration
-#define BREAK_BEAM_PIN 39
+#define BREAK_BEAM_PIN 2
 
 // LED strip configuration
 #define LED_STRIP_PIN 38
@@ -78,12 +78,12 @@ private:
 
 // I2S configuration
 #define I2S_PIN_BCLK 13
-#define I2S_PIN_DATA 15
-#define I2S_PIN_LRCK 12
+#define I2S_PIN_DATA 21
+#define I2S_PIN_LRCK 14
 
-#define I2S_PIN_INMP441_SD 5
-#define I2S_PIN_INMP441_WS 11
-#define I2S_PIN_INMP441_SCK 12
+#define I2S_PIN_INMP441_SD 39
+#define I2S_PIN_INMP441_WS 41
+#define I2S_PIN_INMP441_SCK 40
 
 // Audio settings
 #define SAMPLE_RATE 44100
@@ -209,11 +209,10 @@ private:
 // Define your event types here
 enum Events : EventType {
     WS_CONNECTED = 0,
-    WS_DISCONNECTED,
-    CMD_RECORD_START,
-    CMD_RECORD_STOP,
-    CMD_PLAYBACK_START,
-    CMD_PLAYBACK_STOP,
+    CMD_START_RECORDING,
+    CMD_STOP_RECORDING,
+    CMD_START_PLAYING,
+    CMD_STOP_PLAYING,
     KEYPAD_PRESS,
     FINGERPRINT_MATCHED,
     FINGERPRINT_NO_MATCH,
@@ -477,8 +476,10 @@ public:
 private:
     static void pirTask(void *parameter);
     int _pin;
+    unsigned long _lastDebounceTime;
+    int _lastState;
+    int _state;
     static EventDispatcher *eventDispatcher;
-    static volatile bool cooldownActive;
 };
 
 class BreakBeamSensor {
@@ -489,6 +490,9 @@ public:
 private:
     static void breakBeamTask(void *parameter);
     int _pin;
+    unsigned long _lastDebounceTime;
+    int _lastState;
+    int _state;
     static EventDispatcher *eventDispatcher;
 };
 
@@ -873,10 +877,10 @@ EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &g
         : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
-    dispatcher.registerCallback(CMD_RECORD_START, [this](const Event &e) { handleRecordStart(e); });
-    dispatcher.registerCallback(CMD_RECORD_STOP, [this](const Event &e) { handleRecordStop(e); });
-    dispatcher.registerCallback(CMD_PLAYBACK_START, [this](const Event &e) { handlePlaybackStart(e); });
-    dispatcher.registerCallback(CMD_PLAYBACK_STOP, [this](const Event &e) { handlePlaybackStop(e); });
+    dispatcher.registerCallback(CMD_START_RECORDING, [this](const Event &e) { handleRecordStart(e); });
+    dispatcher.registerCallback(CMD_STOP_RECORDING, [this](const Event &e) { handleRecordStop(e); });
+    dispatcher.registerCallback(CMD_START_PLAYING, [this](const Event &e) { handlePlaybackStart(e); });
+    dispatcher.registerCallback(CMD_STOP_PLAYING, [this](const Event &e) { handlePlaybackStop(e); });
     dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
     dispatcher.registerCallback(AUDIO_CHUNK_READ, [this](const Event &e) { handleAudioChunkRead(e); });
@@ -1332,7 +1336,6 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
     switch (type) {
         case WStype_DISCONNECTED:
             LOG_I(TAG, "WebSocket disconnected");
-            eventDispatcher->dispatchEvent({WS_DISCONNECTED, ""});
             break;
         case WStype_CONNECTED:
             LOG_I(TAG, "WebSocket connected");
@@ -1348,14 +1351,23 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             const char *event_type = doc["event_type"];
             LOG_I(TAG, "Received event: %s", event_type);
 
-            if (strcmp(event_type, "start_recording") == 0) {
-                eventDispatcher->dispatchEvent({CMD_RECORD_START, "", 0});
-            } else if (strcmp(event_type, "stop_recording") == 0) {
-                eventDispatcher->dispatchEvent({CMD_RECORD_STOP, "", 0});
-            } else if (strcmp(event_type, "start_playing") == 0) {
-                eventDispatcher->dispatchEvent({CMD_PLAYBACK_START, "", 0});
-            } else if (strcmp(event_type, "stop_playing") == 0) {
-                eventDispatcher->dispatchEvent({CMD_PLAYBACK_STOP, "", 0});
+            // Log the entire JSON payload
+            String jsonString;
+            serializeJson(doc, jsonString);
+            LOG_I(TAG, "Received JSON: %s", jsonString.c_str());
+
+            if (strcmp(event_type, "audio") == 0) {
+                const char *action = doc["action"];
+
+                if (strcmp(action, "start_recording") == 0) {
+                    eventDispatcher->dispatchEvent({CMD_START_RECORDING, ""});
+                } else if (strcmp(action, "stop_recording") == 0) {
+                    eventDispatcher->dispatchEvent({CMD_STOP_RECORDING, ""});
+                } else if (strcmp(action, "start_playing") == 0) {
+                    eventDispatcher->dispatchEvent({CMD_START_PLAYING, ""});
+                } else if (strcmp(action, "stop_playing") == 0) {
+                    eventDispatcher->dispatchEvent({CMD_STOP_PLAYING, ""});
+                }
             } else if (strcmp(event_type, "change_state") == 0) {
                 JsonObject data = doc["data"];
                 String jsonString;
@@ -1403,17 +1415,14 @@ void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
 
 #include "sensors.h"
 #include "logger.h"
-#include "network_manager.h"
 
 static const char *TAG_PIR = "PIR_SENSOR";
 static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
 
+// PIR Sensor Implementation
 EventDispatcher *PIRSensor::eventDispatcher = nullptr;
-volatile bool PIRSensor::cooldownActive = false;
 
-EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
-
-PIRSensor::PIRSensor(int pin) : _pin(pin) {}
+PIRSensor::PIRSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(LOW), _state(LOW) {}
 
 void PIRSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
@@ -1424,21 +1433,38 @@ void PIRSensor::begin(EventDispatcher &dispatcher) {
 
 void PIRSensor::pirTask(void *parameter) {
     auto *pirSensor = static_cast<PIRSensor *>(parameter);
-    TickType_t cooldownTime = pdMS_TO_TICKS(60000); // 1 minute cooldown
+    const unsigned long debounceDelay = 50; // 50ms debounce time
+    const unsigned long cooldownTime = 60000; // 1 minute cooldown
+    unsigned long lastTriggerTime = 0;
 
     while (true) {
-        if (digitalRead(pirSensor->_pin) == HIGH && !cooldownActive) {
-            LOG_I(TAG_PIR, "Motion detected");
-            eventDispatcher->dispatchEvent({MOTION_DETECTED, ""});
-            cooldownActive = true;
-            vTaskDelay(cooldownTime);
-            cooldownActive = false;
+        int reading = digitalRead(pirSensor->_pin);
+
+        if (reading != pirSensor->_lastState) {
+            pirSensor->_lastDebounceTime = millis();
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+
+        if ((millis() - pirSensor->_lastDebounceTime) > debounceDelay) {
+            if (reading != pirSensor->_state) {
+                pirSensor->_state = reading;
+
+                if (pirSensor->_state == HIGH && (millis() - lastTriggerTime) > cooldownTime) {
+                    LOG_I(TAG_PIR, "Motion detected");
+                    eventDispatcher->dispatchEvent({MOTION_DETECTED, ""});
+                    lastTriggerTime = millis();
+                }
+            }
+        }
+
+        pirSensor->_lastState = reading;
+        vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
     }
 }
 
-BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin) {}
+// Break Beam Sensor Implementation
+EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
+
+BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(HIGH), _state(HIGH) {}
 
 void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
@@ -1449,18 +1475,28 @@ void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
 
 void BreakBeamSensor::breakBeamTask(void *parameter) {
     auto *breakBeamSensor = static_cast<BreakBeamSensor *>(parameter);
-    bool lastState = digitalRead(breakBeamSensor->_pin);
+    const unsigned long debounceDelay = 50; // 50ms debounce time
 
     while (true) {
-        bool currentState = digitalRead(breakBeamSensor->_pin);
-        if (currentState != lastState) {
-            if (currentState == LOW) {
-                LOG_I(TAG_BREAK_BEAM, "Break beam triggered");
-                eventDispatcher->dispatchEvent({BREAK_BEAM_TRIGGERED, ""});
-            }
-            lastState = currentState;
+        int reading = digitalRead(breakBeamSensor->_pin);
+
+        if (reading != breakBeamSensor->_lastState) {
+            breakBeamSensor->_lastDebounceTime = millis();
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+
+        if ((millis() - breakBeamSensor->_lastDebounceTime) > debounceDelay) {
+            if (reading != breakBeamSensor->_state) {
+                breakBeamSensor->_state = reading;
+
+                if (breakBeamSensor->_state == LOW) {
+                    LOG_I(TAG_BREAK_BEAM, "Break beam triggered");
+                    eventDispatcher->dispatchEvent({BREAK_BEAM_TRIGGERED, ""});
+                }
+            }
+        }
+
+        breakBeamSensor->_lastState = reading;
+        vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
     }
 }
 
@@ -1522,7 +1558,7 @@ void UI::uiTask(void *parameter) {
     UI *ui = static_cast<UI *>(parameter);
     while (true) {
         ui->update();
-        vTaskDelay(pdMS_TO_TICKS(10)); // Update every 10ms
+        vTaskDelay(pdMS_TO_TICKS(500)); // Update every 500ms
     }
 }
 

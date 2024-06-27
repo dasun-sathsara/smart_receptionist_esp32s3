@@ -15,6 +15,7 @@ char hexaKeys[ROWS][COLS] = {
         {'7', '8', '9',},
         {'*', '0', '#',}
 };
+
 byte rowPins[ROWS] = {4, 5, 6, 7};
 byte colPins[COLS] = {15, 16, 17};
 
