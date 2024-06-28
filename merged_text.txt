@@ -212,10 +212,10 @@ private:
 // Define your event types here
 enum Events : EventType {
     WS_CONNECTED = 0,
-    CMD_START_RECORDING,
-    CMD_STOP_RECORDING,
-    CMD_START_PLAYING,
-    CMD_STOP_PLAYING,
+    CMD_TG_START_RECORDING,
+    CMD_TG_STOP_RECORDING,
+    CMD_TG_START_PLAYING,
+    CMD_TG_STOP_PLAYING,
     FINGERPRINT_MATCHED,
     FINGERPRINT_NO_MATCH,
     AUDIO_DATA_RECEIVED,
@@ -227,7 +227,7 @@ enum Events : EventType {
     GATE_CLOSED,
     LED_TURNED_ON,
     LED_TURNED_OFF,
-    PASSWORD_VALIDATED,
+    PASSWORD_VALID,
     CMD_GRANT_ACCESS,
     CMD_DENY_ACCESS
 
@@ -924,10 +924,10 @@ EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &g
         : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
-    dispatcher.registerCallback(CMD_START_RECORDING, [this](const Event &e) { handleRecordStart(e); });
-    dispatcher.registerCallback(CMD_STOP_RECORDING, [this](const Event &e) { handleRecordStop(e); });
-    dispatcher.registerCallback(CMD_START_PLAYING, [this](const Event &e) { handlePlaybackStart(e); });
-    dispatcher.registerCallback(CMD_STOP_PLAYING, [this](const Event &e) { handlePlaybackStop(e); });
+    dispatcher.registerCallback(CMD_TG_START_RECORDING, [this](const Event &e) { handleRecordStart(e); });
+    dispatcher.registerCallback(CMD_TG_STOP_RECORDING, [this](const Event &e) { handleRecordStop(e); });
+    dispatcher.registerCallback(CMD_TG_START_PLAYING, [this](const Event &e) { handlePlaybackStart(e); });
+    dispatcher.registerCallback(CMD_TG_STOP_PLAYING, [this](const Event &e) { handlePlaybackStop(e); });
     dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
     dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
@@ -937,14 +937,14 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(LED_TURNED_ON, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_OFF, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleResidentAuthorized(e); });
-    dispatcher.registerCallback(PASSWORD_VALIDATED, [this](const Event &e) { handleResidentAuthorized(e); });
+    dispatcher.registerCallback(PASSWORD_VALID, [this](const Event &e) { handleResidentAuthorized(e); });
     dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleGrantAccess(e); });
     dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleDenyAccess(e); });
     dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
 }
 
 
-void EventHandler::handleRecordStart(const Event &event) {
+void EventHandler::handleTelegramAudioCommand(const Event &event) {
     audio.startRecording();
     LOG_I(TAG, "Recording started");
 }
@@ -1017,12 +1017,12 @@ void EventHandler::handleResidentAuthorized(const Event &event) {
     gate.openGate();
 }
 
-void EventHandler::handleGrantAccess(const Event &event) {
+void EventHandler::handleAccessGranted(const Event &event) {
     gate.openGate();
     ui.displayAccessGranted();
 }
 
-void EventHandler::handleDenyAccess(const Event &event) {
+void EventHandler::handleAccessDenied(const Event &event) {
     ui.displayAccessDenied();
 }
 
@@ -1401,13 +1401,13 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                 const char *action = data["action"];
 
                 if (strcmp(action, "start_recording") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_START_RECORDING, ""});
+                    eventDispatcher->dispatchEvent({CMD_TG_START_RECORDING, ""});
                 } else if (strcmp(action, "stop_recording") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_STOP_RECORDING, ""});
+                    eventDispatcher->dispatchEvent({CMD_TG_STOP_RECORDING, ""});
                 } else if (strcmp(action, "start_playing") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_START_PLAYING, ""});
+                    eventDispatcher->dispatchEvent({CMD_TG_START_PLAYING, ""});
                 } else if (strcmp(action, "stop_playing") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_STOP_PLAYING, ""});
+                    eventDispatcher->dispatchEvent({CMD_TG_STOP_PLAYING, ""});
                 } else {
                     LOG_W(TAG, "Unknown audio action: %s", action);
                 }
@@ -1735,7 +1735,7 @@ void UI::displayPasswordResult(bool correct) {
     if (correct) {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "CORRECT");
-        eventDispatcher->dispatchEvent({PASSWORD_VALIDATED, ""});
+        eventDispatcher->dispatchEvent({PASSWORD_VALID, ""});
     } else {
         u8g2.drawStr(40, 32, "PASSWORD");
         u8g2.drawStr(50, 47, "WRONG");

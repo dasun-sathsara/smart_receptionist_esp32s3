@@ -52,8 +52,8 @@ private:
     Keypad keypad;
     UIState currentState;
     char enteredPassword[5]{};
+    bool enteringPassword;
     int passwordIndex;
-    static const char *menuItems[];
     static const int menuItemCount;
     int currentMenuItem;
     static const char correctPassword[];

@@ -18,8 +18,7 @@ char hexaKeys[ROWS][COLS] = {
 byte rowPins[ROWS] = {4, 5, 6, 7};
 byte colPins[COLS] = {15, 16, 17};
 
-const char *UI::menuItems[] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY AUDIO"};
-const int UI::menuItemCount = sizeof(menuItems) / sizeof(menuItems[0]);
+const int UI::menuItemCount = 4;
 const char UI::correctPassword[] = "1234";
 EventDispatcher *UI::eventDispatcher = nullptr;
 
@@ -28,7 +27,8 @@ UI::UI() : u8g2(U8G2_R0, U8X8_PIN_NONE),
            currentState(UIState::WELCOME),
            currentMenuItem(0),
            passwordIndex(0),
-           lastStateChangeTime(0) {
+           lastStateChangeTime(0),
+           enteringPassword(false) {
     memset(enteredPassword, 0, sizeof(enteredPassword));
 }
 
@@ -46,7 +46,7 @@ void UI::begin(EventDispatcher &dispatcher) {
     UI *ui = static_cast<UI *>(parameter);
     while (true) {
         ui->update();
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
 
@@ -64,7 +64,9 @@ void UI::update() {
         setState(UIState::WELCOME);
     }
 
-    displayCurrentState();
+    if (!enteringPassword) {
+        displayCurrentState();
+    }
 }
 
 void UI::setState(UIState newState) {
@@ -77,8 +79,11 @@ void UI::setStateFor(int seconds, UIState newState) {
     lastStateChangeTime = millis();
     UIState old_state = currentState;
     currentState = newState;
+    LOG_I(TAG, "UI state changed to: %d", static_cast<int>(old_state));
     vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
     currentState = old_state;
+    LOG_I(TAG, "UI state changed back to: %d", static_cast<int>(old_state));
+
 }
 
 void UI::handleKeyPress(char key) {
@@ -94,13 +99,34 @@ void UI::handleKeyPress(char key) {
             handleMenuKeyPress(key);
             break;
         case UIState::ENTER_PASSWORD:
+            enteringPassword = true;
             handlePasswordKeyPress(key);
             break;
         case UIState::RECORDING_AUDIO:
+            if (key == '1') {
+                eventDispatcher->dispatchEvent({CMD_ESP_AUDIO, "stop_recording"});
+                vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for one second
+                setState(UIState::MENU_NOTIFY_OWNER); // Go back to the menu
+            }
+            break;
         case UIState::PLAYING_AUDIO:
             if (key == '1') {
-                eventDispatcher->dispatchEvent({currentState == UIState::RECORDING_AUDIO ? CMD_STOP_RECORDING : CMD_STOP_PLAYING, ""});
+                eventDispatcher->dispatchEvent({CMD_ESP_AUDIO, "stop_playing"});
+                vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for one second
+                setState(UIState::MENU_NOTIFY_OWNER); // Go back to the menu
             }
+            break;
+        case UIState::PASSWORD_CORRECT:
+        case UIState::PASSWORD_INCORRECT:
+        case UIState::OWNER_NOTIFIED:
+        case UIState::ACCESS_GRANTED:
+        case UIState::ACCESS_DENIED:
+        case UIState::MOTION_DETECTED:
+        case UIState::FINGERPRINT_MATCHED:
+        case UIState::FINGERPRINT_NO_MATCH:
+        case UIState::SAY_CHEESE:
+            // Pressing any key will take us back to the menu
+            setState(UIState::MENU_NOTIFY_OWNER);
             break;
         default:
             break;
@@ -127,9 +153,11 @@ void UI::handleMenuKeyPress(char key) {
                     break;
                 case UIState::MENU_RECORD_AUDIO:
                     setState(UIState::RECORDING_AUDIO);
+                    eventDispatcher->dispatchEvent({CMD_ESP_AUDIO, "start_recording"});
                     break;
                 case UIState::MENU_PLAY_AUDIO:
                     setState(UIState::PLAYING_AUDIO);
+                    eventDispatcher->dispatchEvent({CMD_ESP_AUDIO, "start_playing"});
                     break;
             }
             break;
@@ -140,7 +168,7 @@ void UI::handleMenuKeyPress(char key) {
 }
 
 void UI::handlePasswordKeyPress(char key) {
-    if (key >= '0' && key <= '9' && passwordIndex < 4) {
+    if (key >= '0' && key <= '6' && passwordIndex < 4) {
         enteredPassword[passwordIndex++] = key;
         enteredPassword[passwordIndex] = '\0';
 
@@ -151,15 +179,17 @@ void UI::handlePasswordKeyPress(char key) {
         }
         passwordDisplay[passwordIndex] = '\0';
         displayPasswordAsAsterisks(passwordDisplay);
-    } else if (key == '*') {
+    } else if (key == '7') {
         passwordIndex = 0;
         enteredPassword[0] = '\0';
 
         char passwordDisplay[5];
         passwordDisplay[0] = '\0';
         displayPasswordAsAsterisks(passwordDisplay);
-    } else if (key == '#') {
+    } else if (key == '9') {
+        enteringPassword = false;
         bool passwordCorrect = (strcmp(enteredPassword, correctPassword) == 0);
+        eventDispatcher->dispatchEvent({passwordCorrect ? PASSWORD_VALID : PASSWORD_INVALID, ""});
         setState(passwordCorrect ? UIState::PASSWORD_CORRECT : UIState::PASSWORD_INCORRECT);
         passwordIndex = 0;
         enteredPassword[0] = '\0';

@@ -5,7 +5,7 @@ static const char *TAG = "GATE_CONTROL";
 
 EventDispatcher *GateControl::eventDispatcher = nullptr;
 volatile bool GateControl::_isGateOpen = false;
-SemaphoreHandle_t GateControl::_gateStateMutex = xSemaphoreCreateMutex(); // Initialize the mutex
+SemaphoreHandle_t GateControl::_gateStateMutex = xSemaphoreCreateMutex();
 
 GateControl::GateControl(int motorPin1, int motorPin2, int enablePin)
         : _motorPin1(motorPin1), _motorPin2(motorPin2), _enablePin(enablePin) {}
@@ -23,7 +23,7 @@ void GateControl::begin(EventDispatcher &dispatcher) {
 
 void GateControl::openGate() {
     if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        if (!_isGateOpen && !_isMoving) { // Check if gate is closed and not moving
+        if (!_isGateOpen && !_isMoving) {
             digitalWrite(_motorPin1, HIGH);
             digitalWrite(_motorPin2, LOW);
             digitalWrite(_enablePin, HIGH);
@@ -39,7 +39,7 @@ void GateControl::openGate() {
 
 void GateControl::closeGate() {
     if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        if (_isGateOpen && !_isMoving) { // Check if gate is open and not moving
+        if (_isGateOpen && !_isMoving) {
             digitalWrite(_motorPin1, LOW);
             digitalWrite(_motorPin2, HIGH);
             digitalWrite(_enablePin, HIGH);
@@ -57,14 +57,12 @@ bool GateControl::isGateMoving() const {
     return _isMoving;
 }
 
-// Make isGateOpen() non-const and protect with mutex
 bool GateControl::isGateOpen() {
     if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
         bool gateState = _isGateOpen;
         xSemaphoreGive(_gateStateMutex);
         return gateState;
     } else {
-        // Handle mutex failure (e.g., return a default value)
         return false;
     }
 }

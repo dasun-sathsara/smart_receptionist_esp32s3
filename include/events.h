@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <string>
 
-// Increase or decrease this value based on the number of events you need
 constexpr size_t MAX_EVENTS = 64;
 
 using EventType = uint8_t;
@@ -17,8 +16,7 @@ struct Event {
     std::string data;
     size_t dataLength;
 
-    Event(EventType t, const std::string &d = "", size_t s = 0)
-            : type(t), data(d), dataLength(s == 0 ? d.size() : s) {}
+    Event(EventType t, const std::string &d = "", size_t s = 0) : type(t), data(d), dataLength(s == 0 ? d.size() : s) {}
 };
 
 using EventCallback = std::function<void(const Event &)>;
@@ -28,8 +26,6 @@ public:
     void registerCallback(EventType type, EventCallback callback);
 
     void dispatchEvent(const Event &event);
-
-    void removeCallback(EventType type);
 
 private:
     struct CallbackEntry {
@@ -41,13 +37,10 @@ private:
     std::bitset<MAX_EVENTS> registeredEvents;
 };
 
-// Define your event types here
 enum Events : EventType {
     WS_CONNECTED = 0,
-    CMD_START_RECORDING,
-    CMD_STOP_RECORDING,
-    CMD_START_PLAYING,
-    CMD_STOP_PLAYING,
+    CMD_TG_AUDIO,
+    CMD_ESP_AUDIO,
     FINGERPRINT_MATCHED,
     FINGERPRINT_NO_MATCH,
     AUDIO_DATA_RECEIVED,
@@ -59,10 +52,10 @@ enum Events : EventType {
     GATE_CLOSED,
     LED_TURNED_ON,
     LED_TURNED_OFF,
-    PASSWORD_VALIDATED,
+    PASSWORD_VALID,
+    PASSWORD_INVALID,
     CMD_GRANT_ACCESS,
     CMD_DENY_ACCESS
-
 };
 
 #endif // EVENTS_H

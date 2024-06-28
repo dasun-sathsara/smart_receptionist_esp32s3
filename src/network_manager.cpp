@@ -72,17 +72,8 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                 JsonObject data = doc["data"];
                 const char *action = data["action"];
 
-                if (strcmp(action, "start_recording") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_START_RECORDING, ""});
-                } else if (strcmp(action, "stop_recording") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_STOP_RECORDING, ""});
-                } else if (strcmp(action, "start_playing") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_START_PLAYING, ""});
-                } else if (strcmp(action, "stop_playing") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_STOP_PLAYING, ""});
-                } else {
-                    LOG_W(TAG, "Unknown audio action: %s", action);
-                }
+                eventDispatcher->dispatchEvent({CMD_TG_AUDIO, action});
+
             } else if (strcmp(event_type, "change_state") == 0) {
                 JsonObject data = doc["data"];
                 if (!data.isNull()) {

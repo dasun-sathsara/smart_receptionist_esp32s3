@@ -32,23 +32,3 @@ void EventDispatcher::dispatchEvent(const Event &event) {
         }
     }
 }
-
-void EventDispatcher::removeCallback(EventType type) {
-    if (type >= MAX_EVENTS) {
-        LOG_E(TAG, "Event type out of range: %d", type);
-        return;
-    }
-
-    callbacks.erase(
-            std::remove_if(callbacks.begin(), callbacks.end(),
-                           [type](const CallbackEntry &entry) { return entry.type == type; }),
-            callbacks.end()
-    );
-
-    if (callbacks.end() == std::find_if(callbacks.begin(), callbacks.end(),
-                                        [type](const CallbackEntry &entry) { return entry.type == type; })) {
-        registeredEvents.reset(type);
-    }
-
-    LOG_D(TAG, "Removed callback(s) for event type: %d", type);
-}

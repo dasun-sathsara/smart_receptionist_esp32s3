@@ -24,7 +24,7 @@ private:
     UI &ui;
     ESPNow &espNow;
 
-    void handleRecordStart(const Event &event);
+    void handleTelegramAudioCommand(const Event &event);
 
     void handleRecordStop(const Event &event);
 
@@ -48,11 +48,17 @@ private:
 
     void handleResidentAuthorized(const Event &event);
 
-    void handleGrantAccess(const Event &event);
+    void handleAccessGranted(const Event &event);
 
-    void handleDenyAccess(const Event &event);
+    void handleAccessDenied(const Event &event);
 
     void handleMotionDetected(const Event &event);
+
+    void handleESPAudioCommand(const Event &event);
+
+    void handlePasswordValid(const Event &event);
+
+    void handlePasswordInvalid(const Event &event);
 };
 
 #endif // EVENT_HANDLER_H
