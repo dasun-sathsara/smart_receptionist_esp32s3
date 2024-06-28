@@ -5,6 +5,26 @@
 #include <Keypad.h>
 #include "events.h"
 
+enum class UIState {
+    MENU_NOTIFY_OWNER,
+    MENU_ENTER_PASSWORD,
+    MENU_RECORD_AUDIO,
+    MENU_PLAY_AUDIO,
+    OWNER_NOTIFIED,
+    ENTER_PASSWORD,
+    RECORDING_AUDIO,
+    PLAYING_AUDIO,
+    ACCESS_GRANTED,
+    ACCESS_DENIED,
+    MOTION_DETECTED,
+    FINGERPRINT_MATCHED,
+    FINGERPRINT_NO_MATCH,
+    PASSWORD_CORRECT,
+    PASSWORD_INCORRECT,
+    SAY_CHEESE,
+    WELCOME,
+};
+
 class UI {
 public:
     UI();
@@ -13,48 +33,34 @@ public:
 
     void update();
 
-    void displayAccessGranted();
+    void setState(UIState newState);
 
-    void displayAccessDenied();
+    void setStateFor(int seconds, UIState newState);
 
 private:
-    static void uiTask(void *parameter);
-
-    void displayMenu();
+    [[noreturn]] static void uiTask(void *parameter);
 
     void handleKeyPress(char key);
 
-    void displayPasswordResult(bool correct);
+    void displayCurrentState();
 
-    void displayRecordingMessage();
+    void handleMenuKeyPress(char key);
 
-    void displayPlayingMessage();
-
-    void displayFingerprintNoMatch();
-
-    void displayMotionDetected();
-
-    void displayFingerprintMatched();
-
+    void handlePasswordKeyPress(char key);
 
     U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
     Keypad keypad;
-
+    UIState currentState;
+    char enteredPassword[5]{};
+    int passwordIndex;
     static const char *menuItems[];
     static const int menuItemCount;
     int currentMenuItem;
-    bool notificationDisplayed;
-    bool enteringPassword;
-    bool passwordCorrect;
-    bool passwordChecked;
-    bool recordingAudio;
-    bool playingAudio;
-    char enteredPassword[5]{};
-    int passwordIndex;
     static const char correctPassword[];
-
     static EventDispatcher *eventDispatcher;
-
+    unsigned long lastStateChangeTime;
+    static const unsigned long STATE_TIMEOUT = 30000; // 30 seconds timeout
+    void displayPasswordAsAsterisks(char *password);
 };
 
 #endif // UI_H

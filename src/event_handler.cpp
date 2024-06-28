@@ -104,11 +104,9 @@ void EventHandler::handleResidentAuthorized(const Event &event) {
 
 void EventHandler::handleGrantAccess(const Event &event) {
     gate.openGate();
-    ui.displayAccessGranted();
 }
 
 void EventHandler::handleDenyAccess(const Event &event) {
-    ui.displayAccessDenied();
 }
 
 void EventHandler::handleMotionDetected(const Event &event) {

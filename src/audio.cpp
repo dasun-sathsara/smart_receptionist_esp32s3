@@ -14,10 +14,13 @@ TaskHandle_t Audio::i2sWriterTaskHandle = nullptr;
 TaskHandle_t Audio::audioProcessingTaskHandle = nullptr;
 volatile bool Audio::isRecording = false;
 volatile bool Audio::isPlaying = false;
+StaticRingbuffer_t Audio::recordBufferStatic;
+StaticRingbuffer_t Audio::playBufferStatic;
 
 // Audio batching configuration
 const size_t Audio::BATCH_SIZE = 4096; // Adjust this value based on your needs
 const TickType_t Audio::BATCH_TIMEOUT = pdMS_TO_TICKS(100); // 100ms timeout
+
 
 const i2s_config_t Audio::i2sConfigRx = {
         .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_RX),
@@ -64,8 +67,14 @@ const i2s_pin_config_t Audio::i2sPinConfigTx = {
 void Audio::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
 
-    recordBuffer = xRingbufferCreateNoSplit(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
-    playBuffer = xRingbufferCreateNoSplit(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
+    recordBuffer = xRingbufferCreateStatic(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF,
+                                           (uint8_t *) ps_malloc(RING_BUF_SIZE),
+                                           &recordBufferStatic);
+
+    playBuffer = xRingbufferCreateStatic(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF,
+                                         (uint8_t *) ps_malloc(RING_BUF_SIZE),
+                                         &playBufferStatic);
+
     if (recordBuffer == nullptr || playBuffer == nullptr) {
         ESP_LOGE(TAG, "Failed to create ring buffers");
         return;
@@ -178,7 +187,7 @@ void Audio::i2sWriterTask(void *parameter) {
 void Audio::audioProcessingTask(void *parameter) {
     size_t itemSize = 0;
     uint8_t *item = nullptr;
-    uint8_t *batchBuffer = (uint8_t *) heap_caps_malloc(BATCH_SIZE + 6, MALLOC_CAP_DMA);
+    auto *batchBuffer = (uint8_t *) heap_caps_malloc(BATCH_SIZE + 6, MALLOC_CAP_DMA);
     size_t batchedSize = 0;
     TickType_t lastSendTime = xTaskGetTickCount();
 
@@ -213,7 +222,8 @@ void Audio::audioProcessingTask(void *parameter) {
             batchedSize = 0;
             lastSendTime = xTaskGetTickCount();
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+//        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(100)); // Change it back to 10 if it doesn't work
     }
 
     heap_caps_free(batchBuffer);

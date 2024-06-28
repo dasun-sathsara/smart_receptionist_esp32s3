@@ -2,58 +2,51 @@
 #include "config.h"
 #include "logger.h"
 #include <Wire.h>
+#include "icons.h"
 
 static const char *TAG = "UI";
 
-// Define keypad size
+// Keypad configuration
 const byte ROWS = 4;
 const byte COLS = 3;
-
 char hexaKeys[ROWS][COLS] = {
-        {'1', '2', '3',},
-        {'4', '5', '6',},
-        {'7', '8', '9',},
-        {'*', '0', '#',}
+        {'1', '2', '3'},
+        {'4', '5', '6'},
+        {'7', '8', '9'},
+        {'*', '0', '#'}
 };
-
 byte rowPins[ROWS] = {4, 5, 6, 7};
 byte colPins[COLS] = {15, 16, 17};
 
-const char *UI::menuItems[] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY RECEIVED AUDIO"};
+const char *UI::menuItems[] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY AUDIO"};
 const int UI::menuItemCount = sizeof(menuItems) / sizeof(menuItems[0]);
 const char UI::correctPassword[] = "1234";
-
 EventDispatcher *UI::eventDispatcher = nullptr;
 
 UI::UI() : u8g2(U8G2_R0, U8X8_PIN_NONE),
            keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS),
+           currentState(UIState::WELCOME),
            currentMenuItem(0),
-           notificationDisplayed(false),
-           enteringPassword(false),
-           passwordCorrect(false),
-           passwordChecked(false),
-           recordingAudio(false),
-           playingAudio(false),
-           passwordIndex(0) {
-
+           passwordIndex(0),
+           lastStateChangeTime(0) {
     memset(enteredPassword, 0, sizeof(enteredPassword));
 }
 
 void UI::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
     Wire.begin(SDA_PIN, SCL_PIN);
-    u8g2.setBusClock(400000);  // Set I2C clock speed to 400kHz
+    u8g2.setBusClock(400000);
     u8g2.setI2CAddress(I2C_ADDRESS * 2);
     u8g2.begin();
     xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
     LOG_I(TAG, "UI initialized");
 }
 
-void UI::uiTask(void *parameter) {
+[[noreturn]] void UI::uiTask(void *parameter) {
     UI *ui = static_cast<UI *>(parameter);
     while (true) {
         ui->update();
-        vTaskDelay(pdMS_TO_TICKS(500)); // Update every 500ms
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
@@ -63,183 +56,267 @@ void UI::update() {
         LOG_I(TAG, "Key pressed: %c", key);
         handleKeyPress(key);
     }
-    displayMenu();
+
+    // If the current state has been active for more than the timeout, go back to the welcome screen
+    // Unless we are recording or playing audio
+    if (millis() - lastStateChangeTime > STATE_TIMEOUT && currentState != UIState::WELCOME && currentState != UIState::RECORDING_AUDIO &&
+        currentState != UIState::PLAYING_AUDIO) {
+        setState(UIState::WELCOME);
+    }
+
+    displayCurrentState();
+}
+
+void UI::setState(UIState newState) {
+    currentState = newState;
+    lastStateChangeTime = millis();
+    LOG_I(TAG, "UI state changed to: %d", static_cast<int>(newState));
+}
+
+void UI::setStateFor(int seconds, UIState newState) {
+    lastStateChangeTime = millis();
+    UIState old_state = currentState;
+    currentState = newState;
+    vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
+    currentState = old_state;
 }
 
 void UI::handleKeyPress(char key) {
-    if (enteringPassword) {
-        if (key >= '0' && key <= '9' && passwordIndex < 4) {
-            enteredPassword[passwordIndex++] = key;
-            enteredPassword[passwordIndex] = '\0';
-        } else if (key == '*') {
-            passwordIndex = 0;
-            enteredPassword[0] = '\0';
-        } else if (key == '#') {
-            passwordCorrect = (strcmp(enteredPassword, correctPassword) == 0);
-            passwordChecked = true;
-            enteringPassword = false;
-            displayPasswordResult(passwordCorrect);
-            vTaskDelay(pdMS_TO_TICKS(2000));
-            passwordChecked = false;
-            passwordIndex = 0;
-            enteredPassword[0] = '\0';
-        }
-    } else if (recordingAudio || playingAudio) {
-        if (key == '1') {
-            recordingAudio = false;
-            playingAudio = false;
-        }
-    } else {
-        switch (key) {
-            case '2':
-                currentMenuItem = (currentMenuItem - 1 + menuItemCount) % menuItemCount;
-                notificationDisplayed = false;
-                break;
-            case '8':
-                currentMenuItem = (currentMenuItem + 1) % menuItemCount;
-                notificationDisplayed = false;
-                break;
-            case '5':
-                if (currentMenuItem == 0) {
-                    notificationDisplayed = true;
-//                    eventDispatcher->dispatchEvent({EN_CMD_CAPTURE_IMAGE, ""});
-                } else if (currentMenuItem == 1) {
-                    enteringPassword = true;
-                } else if (currentMenuItem == 2) {
-                    recordingAudio = true;
-//                    eventDispatcher->dispatchEvent({RECORD_START, ""});
-                } else if (currentMenuItem == 3) {
-                    playingAudio = true;
-//                    eventDispatcher->dispatchEvent({PLAYBACK_START, ""});
-                }
-                break;
-        }
+    switch (currentState) {
+        case UIState::WELCOME:
+            // Pressing any key will take us to the menu
+            setState(UIState::MENU_NOTIFY_OWNER);
+            break;
+        case UIState::MENU_NOTIFY_OWNER:
+        case UIState::MENU_ENTER_PASSWORD:
+        case UIState::MENU_RECORD_AUDIO:
+        case UIState::MENU_PLAY_AUDIO:
+            handleMenuKeyPress(key);
+            break;
+        case UIState::ENTER_PASSWORD:
+            handlePasswordKeyPress(key);
+            break;
+        case UIState::RECORDING_AUDIO:
+        case UIState::PLAYING_AUDIO:
+            if (key == '1') {
+                eventDispatcher->dispatchEvent({currentState == UIState::RECORDING_AUDIO ? CMD_STOP_RECORDING : CMD_STOP_PLAYING, ""});
+            }
+            break;
+        default:
+            break;
     }
 }
 
-void UI::displayMenu() {
-    u8g2.clearBuffer();
+void UI::handleMenuKeyPress(char key) {
+    switch (key) {
+        case '2':
+            currentMenuItem = (currentMenuItem - 1 + menuItemCount) % menuItemCount;
+            setState(static_cast<UIState>(static_cast<int>(UIState::MENU_NOTIFY_OWNER) + currentMenuItem));
+            break;
+        case '8':
+            currentMenuItem = (currentMenuItem + 1) % menuItemCount;
+            setState(static_cast<UIState>(static_cast<int>(UIState::MENU_NOTIFY_OWNER) + currentMenuItem));
+            break;
+        case '5':
+            switch (currentState) {
+                case UIState::MENU_NOTIFY_OWNER:
+                    setState(UIState::OWNER_NOTIFIED);
+                    break;
+                case UIState::MENU_ENTER_PASSWORD:
+                    setState(UIState::ENTER_PASSWORD);
+                    break;
+                case UIState::MENU_RECORD_AUDIO:
+                    setState(UIState::RECORDING_AUDIO);
+                    break;
+                case UIState::MENU_PLAY_AUDIO:
+                    setState(UIState::PLAYING_AUDIO);
+                    break;
+            }
+            break;
+        default:
+            LOG_I(TAG, "Invalid key: %c", key);
+            break;
+    }
+}
 
-    if (notificationDisplayed && currentMenuItem == 0) {
-        u8g2.setFont(u8g2_font_profont17_tr);
-        u8g2.drawStr(15, 32, "OWNER HAS BEEN");
-        u8g2.drawStr(35, 47, "NOTIFIED");
-    } else if (enteringPassword && currentMenuItem == 1) {
-        u8g2.setFont(u8g2_font_profont17_tr);
-        u8g2.drawStr(15, 32, "ENTER PASSWORD");
-        u8g2.drawStr(35, 47, enteredPassword);
-    } else if (recordingAudio && currentMenuItem == 2) {
-        displayRecordingMessage();
-    } else if (playingAudio && currentMenuItem == 3) {
-        displayPlayingMessage();
-    } else {
-        switch (currentMenuItem) {
-            case 0:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_notification_bell_bits);
-                u8g2.drawStr(33, 25, "NOTIFY");
-                u8g2.drawStr(33, 40, "OWNER");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 12, 1, 3);
-                break;
-            case 1:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_device_lock_bits);
-                u8g2.drawStr(33, 25, "ENTER");
-                u8g2.drawStr(33, 40, "PASSWORD");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 21, 1, 3);
-                break;
-            case 2:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_microphone_bits);
-                u8g2.drawStr(33, 25, "RECORD");
-                u8g2.drawStr(33, 40, "AUDIO");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 34, 1, 3);
-                break;
-            case 3:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_volume_loud_bits);
-                u8g2.drawStr(33, 20, "PLAY");
-                u8g2.drawStr(33, 36, "RECEIVED");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 48, 1, 3);
-                u8g2.drawStr(33, 52, "AUDIO");
-                break;
+void UI::handlePasswordKeyPress(char key) {
+    if (key >= '0' && key <= '9' && passwordIndex < 4) {
+        enteredPassword[passwordIndex++] = key;
+        enteredPassword[passwordIndex] = '\0';
+
+        // Display the entered password as asterisks
+        char passwordDisplay[5];
+        for (int i = 0; i < passwordIndex; i++) {
+            passwordDisplay[i] = '*';
         }
+        passwordDisplay[passwordIndex] = '\0';
+        displayPasswordAsAsterisks(passwordDisplay);
+    } else if (key == '*') {
+        passwordIndex = 0;
+        enteredPassword[0] = '\0';
+
+        char passwordDisplay[5];
+        passwordDisplay[0] = '\0';
+        displayPasswordAsAsterisks(passwordDisplay);
+    } else if (key == '#') {
+        bool passwordCorrect = (strcmp(enteredPassword, correctPassword) == 0);
+        setState(passwordCorrect ? UIState::PASSWORD_CORRECT : UIState::PASSWORD_INCORRECT);
+        passwordIndex = 0;
+        enteredPassword[0] = '\0';
     }
-
-    u8g2.sendBuffer();
 }
 
-void UI::displayPasswordResult(bool correct) {
+void UI::displayCurrentState() {
     u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    if (correct) {
-        u8g2.drawStr(40, 32, "PASSWORD");
-        u8g2.drawStr(50, 47, "CORRECT");
-        eventDispatcher->dispatchEvent({PASSWORD_VALIDATED, ""});
-    } else {
-        u8g2.drawStr(40, 32, "PASSWORD");
-        u8g2.drawStr(50, 47, "WRONG");
+    u8g2.setFontMode(1);
+    u8g2.setBitmapMode(1);
+
+    switch (currentState) {
+        case UIState::MENU_NOTIFY_OWNER:
+            u8g2.drawLine(116, 7, 116, 55);
+            u8g2.drawBox(113, 9, 7, 11);
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(42, 45, "OWNER");
+            u8g2.drawStr(42, 29, "NOTIFY");
+            u8g2.setDrawColor(2);
+            u8g2.drawXBMP(14, 24, 16, 16, image_notification_bell_bits);
+            break;
+        case UIState::MENU_ENTER_PASSWORD:
+            u8g2.drawXBMP(11, 24, 16, 16, image_device_lock_bits);
+            u8g2.drawLine(116, 7, 116, 55);
+            u8g2.drawBox(113, 18, 7, 11);
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(34, 28, "ENTER");
+            u8g2.drawStr(34, 45, "PASSWORD");
+            break;
+        case UIState::MENU_RECORD_AUDIO:
+            u8g2.drawXBMP(11, 24, 16, 16, image_microphone_bits);
+            u8g2.drawLine(116, 7, 116, 55);
+            u8g2.drawBox(113, 32, 7, 11);
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(39, 28, "RECORD");
+            u8g2.drawStr(39, 45, "AUDIO");
+            break;
+        case UIState::MENU_PLAY_AUDIO:
+            u8g2.drawLine(116, 7, 116, 55);
+            u8g2.drawBox(113, 42, 7, 11);
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(39, 28, "PLAY");
+            u8g2.drawStr(39, 45, "AUDIO");
+            u8g2.drawXBMP(9, 24, 20, 16, image_volume_loud_bits);
+            break;
+        case UIState::OWNER_NOTIFIED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(22, 21, "OWNER HAS");
+            u8g2.drawStr(28, 53, "NOTIFIED");
+            u8g2.drawStr(46, 37, "BEEN");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::ENTER_PASSWORD:
+            u8g2.setFont(u8g2_font_t0_16b_tr);
+            u8g2.drawStr(8, 26, "ENTER PASSWORD");
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(45, 47, "");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::RECORDING_AUDIO:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(10, 26, "RECORDING...");
+            u8g2.setFont(u8g2_font_profont15_tr);
+            u8g2.drawStr(11, 55, "PRESS 1 TO STOP");
+            u8g2.drawFrame(1, 1, 126, 37);
+            break;
+        case UIState::PLAYING_AUDIO:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(20, 26, "PLAYING...");
+            u8g2.setFont(u8g2_font_profont15_tr);
+            u8g2.drawStr(11, 55, "PRESS 1 TO STOP");
+            u8g2.drawFrame(1, 1, 126, 37);
+            break;
+        case UIState::ACCESS_GRANTED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(34, 29, "ACCESS");
+            u8g2.drawStr(31, 45, "GRANTED");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::ACCESS_DENIED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(34, 29, "ACCESS");
+            u8g2.drawStr(34, 46, "DENIED");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::MOTION_DETECTED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(35, 30, "MOTION");
+            u8g2.drawStr(28, 45, "DETECTED");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::FINGERPRINT_MATCHED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(14, 29, "FINGERPRINT");
+            u8g2.drawStr(32, 45, "MATCHED");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::FINGERPRINT_NO_MATCH:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(14, 29, "FINGERPRINT");
+            u8g2.drawStr(27, 45, "NO MATCH");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::PASSWORD_CORRECT:
+            u8g2.setDrawColor(2);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(31, 34, "CORRECT");
+            u8g2.setDrawColor(1);
+            u8g2.drawStr(27, 19, "PASSWORD");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawXBMP(48, 41, 29, 14, image_FaceNormal_bits);
+            break;
+        case UIState::PASSWORD_INCORRECT:
+            u8g2.setDrawColor(2);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(23, 36, "INCORRECT");
+            u8g2.setDrawColor(1);
+            u8g2.drawStr(27, 20, "PASSWORD");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawXBMP(49, 42, 29, 14, image_FaceNopower_bits);
+            break;
+        case UIState::SAY_CHEESE:
+            u8g2.setDrawColor(2);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(17, 46, "CHEESE");
+            u8g2.setDrawColor(1);
+            u8g2.drawStr(18, 29, "SAY");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawXBM(88, 23, 18, 18, image_Smile_bits);
+            break;
+        case UIState::WELCOME:
+            u8g2.setDrawColor(2);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(10, 40, "RECEPTIONIST");
+            u8g2.setDrawColor(1);
+            u8g2.drawStr(42, 23, "SMART");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawEllipse(63, 49, 2, 2);
+            u8g2.drawEllipse(55, 49, 2, 2);
+            u8g2.drawEllipse(71, 49, 2, 2);
+            break;
     }
     u8g2.sendBuffer();
 }
 
-void UI::displayRecordingMessage() {
+void UI::displayPasswordAsAsterisks(char *password) {
     u8g2.clearBuffer();
+    u8g2.setFontMode(1);
+    u8g2.setBitmapMode(1);
+    u8g2.setFont(u8g2_font_t0_16b_tr);
+    u8g2.drawStr(8, 26, "ENTER PASSWORD");
     u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(2, 32, "RECORDING...");
-    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
+    u8g2.drawStr(45, 47, password);
+    u8g2.drawFrame(1, 1, 125, 61);
     u8g2.sendBuffer();
 }
-
-void UI::displayPlayingMessage() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(2, 32, "PLAYING...");
-    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
-    u8g2.sendBuffer();
-}
-
-void UI::displayAccessGranted() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "ACCESS");
-    u8g2.drawStr(50, 47, "GRANTED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayAccessDenied() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "ACCESS");
-    u8g2.drawStr(50, 47, "DENIED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayMotionDetected() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "MOTION");
-    u8g2.drawStr(50, 47, "DETECTED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayFingerprintMatched() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "FINGERPRINT");
-    u8g2.drawStr(50, 47, "MATCHED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayFingerprintNoMatch() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "FINGERPRINT");
-    u8g2.drawStr(50, 47, "NO MATCH");
-    u8g2.sendBuffer();
-}
-
