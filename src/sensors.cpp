@@ -7,11 +7,11 @@ static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
 // PIR Sensor Implementation
 EventDispatcher *PIRSensor::eventDispatcher = nullptr;
 
-PIRSensor::PIRSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(LOW), _state(LOW) {}
+PIRSensor::PIRSensor(int pin) : pin(pin), lastDebounceTime(0), lastState(LOW), state(LOW) {}
 
 void PIRSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pinMode(_pin, INPUT);
+    pinMode(pin, INPUT);
     xTaskCreate(pirTask, "PIR Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_PIR, "PIR sensor initialized");
 }
@@ -23,17 +23,17 @@ void PIRSensor::pirTask(void *parameter) {
     unsigned long lastTriggerTime = 0;
 
     while (true) {
-        int reading = digitalRead(pirSensor->_pin);
+        int reading = digitalRead(pirSensor->pin);
 
-        if (reading != pirSensor->_lastState) {
-            pirSensor->_lastDebounceTime = millis();
+        if (reading != pirSensor->lastState) {
+            pirSensor->lastDebounceTime = millis();
         }
 
-        if ((millis() - pirSensor->_lastDebounceTime) > debounceDelay) {
-            if (reading != pirSensor->_state) {
-                pirSensor->_state = reading;
+        if ((millis() - pirSensor->lastDebounceTime) > debounceDelay) {
+            if (reading != pirSensor->state) {
+                pirSensor->state = reading;
 
-                if (pirSensor->_state == HIGH && (millis() - lastTriggerTime) > cooldownTime) {
+                if (pirSensor->state == HIGH && (millis() - lastTriggerTime) > cooldownTime) {
                     LOG_I(TAG_PIR, "Motion detected");
                     eventDispatcher->dispatchEvent({MOTION_DETECTED, ""});
                     lastTriggerTime = millis();
@@ -41,7 +41,7 @@ void PIRSensor::pirTask(void *parameter) {
             }
         }
 
-        pirSensor->_lastState = reading;
+        pirSensor->lastState = reading;
         vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
     }
 }
@@ -49,38 +49,38 @@ void PIRSensor::pirTask(void *parameter) {
 // Break Beam Sensor Implementation
 EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
 
-BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(HIGH), _state(HIGH) {}
+BreakBeamSensor::BreakBeamSensor(int pin) : pin(pin), lastDebounceTime(0), lastState(HIGH), state(HIGH) {}
 
 void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pinMode(_pin, INPUT_PULLUP);
+    pinMode(pin, INPUT_PULLUP);
     xTaskCreate(breakBeamTask, "Break Beam Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_BREAK_BEAM, "Break beam sensor initialized");
 }
 
-void BreakBeamSensor::breakBeamTask(void *parameter) {
+    void BreakBeamSensor::breakBeamTask(void *parameter) {
     auto *breakBeamSensor = static_cast<BreakBeamSensor *>(parameter);
-    const unsigned long debounceDelay = 50; // 50ms debounce time
+    const unsigned long debounceDelay = 50;
 
     while (true) {
-        int reading = digitalRead(breakBeamSensor->_pin);
+        int reading = digitalRead(breakBeamSensor->pin);
 
-        if (reading != breakBeamSensor->_lastState) {
-            breakBeamSensor->_lastDebounceTime = millis();
+        if (reading != breakBeamSensor->lastState) {
+            breakBeamSensor->lastDebounceTime = millis();
         }
 
-        if ((millis() - breakBeamSensor->_lastDebounceTime) > debounceDelay) {
-            if (reading != breakBeamSensor->_state) {
-                breakBeamSensor->_state = reading;
+        if ((millis() - breakBeamSensor->lastDebounceTime) > debounceDelay) {
+            if (reading != breakBeamSensor->state) {
+                breakBeamSensor->state = reading;
 
-                if (breakBeamSensor->_state == LOW) {
+                if (breakBeamSensor->state == LOW) {
                     LOG_I(TAG_BREAK_BEAM, "Break beam triggered");
-                    eventDispatcher->dispatchEvent({BREAK_BEAM_TRIGGERED, ""});
+                    eventDispatcher->dispatchEvent({VISITOR_ENTERED, ""});
                 }
             }
         }
 
-        breakBeamSensor->_lastState = reading;
+        breakBeamSensor->lastState = reading;
         vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
     }
 }

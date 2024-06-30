@@ -11,10 +11,10 @@ public:
 
 private:
     static void pirTask(void *parameter);
-    int _pin;
-    unsigned long _lastDebounceTime;
-    int _lastState;
-    int _state;
+    int pin;
+    unsigned long lastDebounceTime;
+    int lastState;
+    int state;
     static EventDispatcher *eventDispatcher;
 };
 
@@ -25,10 +25,10 @@ public:
 
 private:
     static void breakBeamTask(void *parameter);
-    int _pin;
-    unsigned long _lastDebounceTime;
-    int _lastState;
-    int _state;
+    int pin;
+    unsigned long lastDebounceTime;
+    int lastState;
+    int state;
     static EventDispatcher *eventDispatcher;
 };
 

@@ -13,28 +13,28 @@
 #define WS_PORT 8765
 
 // L298N motor driver configuration
-#define MOTOR_PIN1 8
-#define MOTOR_PIN2 9
-#define MOTOR_ENABLE 10
+#define MOTOR_PIN1 39
+#define MOTOR_PIN2 38
+#define MOTOR_ENABLE 47
 
 // PIR sensor configuration
-#define PIR_PIN 21
+#define PIR_PIN 42
 
 // Break beam sensor configuration
-#define BREAK_BEAM_PIN 2
+#define BREAK_BEAM_PIN 41
 
 // LED strip configuration
-#define LED_STRIP_PIN 38
+#define LED_STRIP_PIN 40
 
 // I2S configuration for INMP441 microphone
-#define I2S_MIC_SERIAL_CLOCK 40
-#define I2S_MIC_LEFT_RIGHT_CLOCK 41
-#define I2S_MIC_SERIAL_DATA 39
+#define I2S_MIC_SERIAL_CLOCK 3
+#define I2S_MIC_LEFT_RIGHT_CLOCK 9
+#define I2S_MIC_SERIAL_DATA 10
 
 // I2S configuration for MAX98357A amplifier
-#define I2S_SPEAKER_SERIAL_CLOCK 13
-#define I2S_SPEAKER_LEFT_RIGHT_CLOCK 14
-#define I2S_SPEAKER_SERIAL_DATA 21
+#define I2S_SPEAKER_SERIAL_CLOCK 11
+#define I2S_SPEAKER_LEFT_RIGHT_CLOCK 12
+#define I2S_SPEAKER_SERIAL_DATA 13
 
 // Audio settings
 #define SAMPLE_RATE 48000
@@ -49,12 +49,12 @@
 #define RING_BUF_SIZE (1024 * 1024)
 
 // Fingerprint sensor configuration
-#define FINGERPRINT_TX 17
-#define FINGERPRINT_RX 18
+#define FINGERPRINT_TX 1
+#define FINGERPRINT_RX 2    
 
 // OLED I2C address
-#define SDA_PIN 8
-#define SCL_PIN 18
+#define SDA_PIN 18
+#define SCL_PIN 8
 #define I2C_ADDRESS 0x3C
 
 #endif // CONFIG_H

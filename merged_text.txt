@@ -11,7 +11,6 @@
 class Audio {
 public:
     void begin(EventDispatcher &dispatcher);
-
     static void startRecording();
     static void stopRecording();
     static void startPlayback();
@@ -21,15 +20,13 @@ public:
 private:
     static void i2sReaderTask(void *parameter);
     static void i2sWriterTask(void *parameter);
-    static void audioProcessingTask(void *parameter);
-
+    static void audioTransmissionTask(void *parameter);
     static EventDispatcher *eventDispatcher;
     static RingbufHandle_t recordBuffer;
     static RingbufHandle_t playBuffer;
-
     static TaskHandle_t i2sReaderTaskHandle;
     static TaskHandle_t i2sWriterTaskHandle;
-    static TaskHandle_t audioProcessingTaskHandle;
+    static TaskHandle_t audioTransmissionTaskHandle;
 
     // I2S configuration
     static const i2s_config_t i2sConfigRx;
@@ -40,9 +37,9 @@ private:
     static volatile bool isRecording;
     static volatile bool isPlaying;
 
-    // Audio batching configuration
-    static const size_t BATCH_SIZE;
-    static const TickType_t BATCH_TIMEOUT;
+    // Audio transmission configuration
+    static const size_t TRANSMISSION_BUFFER_SIZE;
+    static const TickType_t TRANSMISSION_TIMEOUT;
 };
 
 #endif // AUDIO_H
@@ -66,28 +63,28 @@ private:
 #define WS_PORT 8765
 
 // L298N motor driver configuration
-#define MOTOR_PIN1 8
-#define MOTOR_PIN2 9
-#define MOTOR_ENABLE 10
+#define MOTOR_PIN1 39
+#define MOTOR_PIN2 38
+#define MOTOR_ENABLE 47
 
 // PIR sensor configuration
-#define PIR_PIN 21
+#define PIR_PIN 42
 
 // Break beam sensor configuration
-#define BREAK_BEAM_PIN 2
+#define BREAK_BEAM_PIN 41
 
 // LED strip configuration
-#define LED_STRIP_PIN 38
+#define LED_STRIP_PIN 40
 
 // I2S configuration for INMP441 microphone
-#define I2S_MIC_SERIAL_CLOCK 40
-#define I2S_MIC_LEFT_RIGHT_CLOCK 41
-#define I2S_MIC_SERIAL_DATA 39
+#define I2S_MIC_SERIAL_CLOCK 3
+#define I2S_MIC_LEFT_RIGHT_CLOCK 9
+#define I2S_MIC_SERIAL_DATA 10
 
 // I2S configuration for MAX98357A amplifier
-#define I2S_SPEAKER_SERIAL_CLOCK 13
-#define I2S_SPEAKER_LEFT_RIGHT_CLOCK 14
-#define I2S_SPEAKER_SERIAL_DATA 21
+#define I2S_SPEAKER_SERIAL_CLOCK 11
+#define I2S_SPEAKER_LEFT_RIGHT_CLOCK 12
+#define I2S_SPEAKER_SERIAL_DATA 13
 
 // Audio settings
 #define SAMPLE_RATE 48000
@@ -102,31 +99,13 @@ private:
 #define RING_BUF_SIZE (1024 * 1024)
 
 // Fingerprint sensor configuration
-#define FINGERPRINT_TX 17
-#define FINGERPRINT_RX 18
+#define FINGERPRINT_TX 1
+#define FINGERPRINT_RX 2    
 
 // OLED I2C address
-#define SDA_PIN 8
-#define SCL_PIN 18
+#define SDA_PIN 18
+#define SCL_PIN 8
 #define I2C_ADDRESS 0x3C
-
-// Define images
-static const unsigned char image_notification_bell_bits[]
-        U8X8_PROGMEM = {0x88, 0x11, 0xc6, 0x63, 0x22, 0x44, 0x31, 0x88, 0x11, 0x88, 0x08, 0x10, 0x08, 0x10, 0x08, 0x10,
-                        0x08, 0x10, 0x04, 0x20, 0x04, 0x20, 0x02, 0x40, 0xff, 0xff, 0x60, 0x06, 0xc0, 0x03, 0x00, 0x00};
-
-static const unsigned char image_device_lock_bits[]
-        U8X8_PROGMEM = {0xf0, 0x01, 0x08, 0x02, 0xe4, 0x04, 0x12, 0x09, 0x0a, 0x0a, 0x0a, 0x0a, 0xfe, 0x0f, 0x03, 0x18,
-                        0xe5, 0x14, 0x11, 0x11, 0x11, 0x11, 0xa1, 0x10, 0xa1, 0x10, 0x45, 0x14, 0x03, 0x18, 0xfe, 0x0f};
-
-static const unsigned char image_microphone_bits[]
-        U8X8_PROGMEM = {0xc0, 0x01, 0xe0, 0x03, 0xa0, 0x02, 0xe0, 0x03, 0xa0, 0x02, 0xe0, 0x03, 0xa0, 0x02, 0xe0, 0x03,
-                        0xe8, 0x0b, 0xc8, 0x09, 0x10, 0x04, 0xe0, 0x03, 0x80, 0x00, 0x80, 0x00, 0xe0, 0x03, 0x00, 0x00};
-
-static const unsigned char image_volume_loud_bits[]
-        U8X8_PROGMEM = {0x80, 0x83, 0x00, 0x40, 0x02, 0x01, 0x20, 0x22, 0x02, 0x10, 0x42, 0x04, 0x0f, 0x8a, 0x04, 0x01,
-                        0x92, 0x08, 0x01, 0x22, 0x09, 0x01, 0x22, 0x09, 0x01, 0x22, 0x09, 0x01, 0x92, 0x08, 0x0f, 0x8a,
-                        0x04, 0x10, 0x42, 0x04, 0x20, 0x22, 0x02, 0x40, 0x02, 0x01, 0x80, 0x83, 0x00, 0x00, 0x00, 0x00};
 
 #endif // CONFIG_H
 
@@ -175,7 +154,6 @@ private:
 #include <cstdint>
 #include <string>
 
-// Increase or decrease this value based on the number of events you need
 constexpr size_t MAX_EVENTS = 64;
 
 using EventType = uint8_t;
@@ -185,8 +163,7 @@ struct Event {
     std::string data;
     size_t dataLength;
 
-    Event(EventType t, const std::string &d = "", size_t s = 0)
-            : type(t), data(d), dataLength(s == 0 ? d.size() : s) {}
+    Event(EventType t, const std::string &d = "", size_t s = 0) : type(t), data(d), dataLength(s == 0 ? d.size() : s) {}
 };
 
 using EventCallback = std::function<void(const Event &)>;
@@ -196,8 +173,6 @@ public:
     void registerCallback(EventType type, EventCallback callback);
 
     void dispatchEvent(const Event &event);
-
-    void removeCallback(EventType type);
 
 private:
     struct CallbackEntry {
@@ -209,28 +184,26 @@ private:
     std::bitset<MAX_EVENTS> registeredEvents;
 };
 
-// Define your event types here
 enum Events : EventType {
     WS_CONNECTED = 0,
-    CMD_TG_START_RECORDING,
-    CMD_TG_STOP_RECORDING,
-    CMD_TG_START_PLAYING,
-    CMD_TG_STOP_PLAYING,
+    CMD_TG_AUDIO,
+    CMD_ESP_AUDIO,
     FINGERPRINT_MATCHED,
     FINGERPRINT_NO_MATCH,
     AUDIO_DATA_RECEIVED,
     ESPNOW_DATA_RECEIVED,
     MOTION_DETECTED,
-    BREAK_BEAM_TRIGGERED,
+    VISITOR_ENTERED,
     CMD_CHANGE_STATE,
     GATE_OPENED,
     GATE_CLOSED,
     LED_TURNED_ON,
+    PERSON_DETECTED,
     LED_TURNED_OFF,
     PASSWORD_VALID,
+    PASSWORD_INVALID,
     CMD_GRANT_ACCESS,
     CMD_DENY_ACCESS
-
 };
 
 #endif // EVENTS_H
@@ -265,13 +238,7 @@ private:
     UI &ui;
     ESPNow &espNow;
 
-    void handleRecordStart(const Event &event);
-
-    void handleRecordStop(const Event &event);
-
-    void handlePlaybackStart(const Event &event);
-
-    void handlePlaybackStop(const Event &event);
+    void handleTelegramAudioCommand(const Event &event);
 
     void handleWebSocketConnected(const Event &event);
 
@@ -289,11 +256,21 @@ private:
 
     void handleResidentAuthorized(const Event &event);
 
-    void handleGrantAccess(const Event &event);
+    void handleAccessGranted(const Event &event);
 
-    void handleDenyAccess(const Event &event);
+    void handleAccessDenied(const Event &event);
 
     void handleMotionDetected(const Event &event);
+
+    void handleESPAudioCommand(const Event &event);
+
+    void handlePasswordValid(const Event &event);
+
+    void handlePasswordInvalid(const Event &event);
+
+    void handlePersonDetected(const Event &event);
+
+    void handleVisitorEntered(const Event &event);
 };
 
 #endif // EVENT_HANDLER_H
@@ -346,29 +323,92 @@ public:
 
     bool isGateMoving() const;
 
-    static bool isGateOpen(); // Make non-const
+    static bool getIsGateOpen();
 
 private:
     static void gateControlTask(void *parameter);
 
-    int _motorPin1;
-    int _motorPin2;
-    int _enablePin;
+    int motorPin1;
+    int motorPin2;
+    int enablePin;
 
-    unsigned long _movementStartTime = 0;
-    bool _isMoving = false;
-    static volatile bool _isGateOpen;
+    unsigned long movementStartTime = 0;
+    bool isMoving = false;
+    static volatile bool isGateOpen;
 
     static EventDispatcher *eventDispatcher;
 
-    // Use a mutex to protect _isGateOpen
-    static SemaphoreHandle_t _gateStateMutex;
+    // Use a mutex to protect isGateOpen
+    static SemaphoreHandle_t gateStateMutex;
 };
 
 #endif // GATE_CONTROL_H
 
 
 ##################################################
+
+############# include\icons.h #############
+
+#ifndef ICONS_H
+#define ICONS_H
+
+#include <U8g2lib.h>
+
+static const unsigned char image_volume_loud_bits[]
+        U8X8_PROGMEM = {0x80, 0x83, 0x00, 0x40, 0x02, 0x01, 0x20, 0x22, 0x02, 0x10,
+                        0x42, 0x04, 0x0f, 0x8a, 0x04, 0x01, 0x92, 0x08, 0x01, 0x22,
+                        0x09, 0x01, 0x22, 0x09, 0x01, 0x22, 0x09, 0x01, 0x92, 0x08,
+                        0x0f, 0x8a, 0x04, 0x10, 0x42, 0x04, 0x20, 0x22, 0x02, 0x40,
+                        0x02, 0x01, 0x80, 0x83, 0x00, 0x00, 0x00, 0x00};
+
+static const unsigned char image_microphone_bits[]
+        U8X8_PROGMEM = {0xc0, 0x01, 0xe0, 0x03, 0xa0, 0x02, 0xe0, 0x03, 0xa0, 0x02,
+                        0xe0, 0x03, 0xa0, 0x02, 0xe0, 0x03, 0xe8, 0x0b, 0xc8, 0x09,
+                        0x10, 0x04, 0xe0, 0x03, 0x80, 0x00, 0x80, 0x00, 0xe0, 0x03,
+                        0x00, 0x00};
+
+static const unsigned char image_device_lock_bits[]
+        U8X8_PROGMEM = {0xf0, 0x01, 0x08, 0x02, 0xe4, 0x04, 0x12, 0x09, 0x0a, 0x0a,
+                        0x0a, 0x0a, 0xfe, 0x0f, 0x03, 0x18, 0xe5, 0x14, 0x11, 0x11,
+                        0x11, 0x11, 0xa1, 0x10, 0xa1, 0x10, 0x45, 0x14, 0x03, 0x18,
+                        0xfe, 0x0f};
+
+
+static const unsigned char image_notification_bell_bits[]
+        U8X8_PROGMEM = {0x88, 0x11, 0xc6, 0x63, 0x22, 0x44, 0x11, 0x8c, 0x11,
+                        0x88, 0x08, 0x10, 0x08, 0x10, 0x08, 0x10, 0x08, 0x10,
+                        0x04, 0x20, 0x04, 0x20, 0x02, 0x40, 0xff, 0xff, 0x60,
+                        0x06, 0xc0, 0x03, 0x00, 0x00};
+
+
+static const unsigned char image_Smile_bits[]
+        U8X8_PROGMEM = {0xc0, 0x0f, 0x00, 0xf0, 0x3f, 0x00, 0xf8, 0x7f, 0x00, 0xfc, 0xff, 0x00, 0xfe,
+                        0xff, 0x01, 0xfe, 0xff, 0x01, 0xff, 0xff, 0x03, 0xcf, 0xcf, 0x03, 0x87, 0x87,
+                        0x03, 0x87, 0x87, 0x03, 0xcf, 0xcf, 0x03, 0xff, 0xff, 0x03, 0xfe, 0xff, 0x01,
+                        0xbe, 0xf7, 0x01, 0x7c, 0xf8, 0x00, 0xf8, 0x7f, 0x00, 0xf0, 0x3f, 0x00, 0xc0,
+                        0x0f, 0x00};
+
+
+static const unsigned char image_FaceNopower_bits[]
+        U8X8_PROGMEM = {0x00, 0x00, 0x00, 0x00, 0xc0, 0x00, 0x60, 0x00, 0xc0, 0x00,
+                        0x60, 0x00, 0xe0, 0x00, 0xe0, 0x00, 0x7e, 0x00, 0xc0, 0x0f,
+                        0x3e, 0x00, 0x80, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0xf8, 0x03, 0x00, 0x00, 0x0c, 0x06, 0x00,
+                        0x00, 0xfe, 0x0f, 0x00, 0x00, 0xfe, 0x0f, 0x00, 0x00, 0x0e,
+                        0x0e, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+static const unsigned char image_FaceNormal_bits[]
+        U8X8_PROGMEM = {0x00, 0x00, 0x00, 0x00, 0x3c, 0x00, 0x80, 0x07, 0x5e, 0x00,
+                        0xc0, 0x0b, 0x7e, 0x00, 0xc0, 0x0f, 0x7e, 0x00, 0xc0, 0x0f,
+                        0x7e, 0x00, 0xc0, 0x0f, 0x3c, 0x00, 0x80, 0x07, 0x00, 0x00,
+                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x02, 0x00,
+                        0x00, 0x08, 0x02, 0x00, 0x00, 0x08, 0x02, 0x00, 0x00, 0x10,
+                        0x01, 0x00, 0x00, 0xe0, 0x00, 0x00};
+
+#endif //ICONS_H
+
+
+###########################################
 
 ############# include\led_control.h #############
 
@@ -389,7 +429,7 @@ public:
     void turnOff();
 
 private:
-    int _pin;
+    int pin;
     static EventDispatcher *eventDispatcher;
 };
 
@@ -476,10 +516,10 @@ public:
 
 private:
     static void pirTask(void *parameter);
-    int _pin;
-    unsigned long _lastDebounceTime;
-    int _lastState;
-    int _state;
+    int pin;
+    unsigned long lastDebounceTime;
+    int lastState;
+    int state;
     static EventDispatcher *eventDispatcher;
 };
 
@@ -490,10 +530,10 @@ public:
 
 private:
     static void breakBeamTask(void *parameter);
-    int _pin;
-    unsigned long _lastDebounceTime;
-    int _lastState;
-    int _state;
+    int pin;
+    unsigned long lastDebounceTime;
+    int lastState;
+    int state;
     static EventDispatcher *eventDispatcher;
 };
 
@@ -510,6 +550,26 @@ private:
 #include <Keypad.h>
 #include "events.h"
 
+enum class UIState {
+    MENU_NOTIFY_OWNER,
+    MENU_ENTER_PASSWORD,
+    MENU_RECORD_AUDIO,
+    MENU_PLAY_AUDIO,
+    OWNER_NOTIFIED,
+    ENTER_PASSWORD,
+    RECORDING_AUDIO,
+    PLAYING_AUDIO,
+    ACCESS_GRANTED,
+    ACCESS_DENIED,
+    MOTION_DETECTED,
+    FINGERPRINT_MATCHED,
+    FINGERPRINT_NO_MATCH,
+    PASSWORD_CORRECT,
+    PASSWORD_INCORRECT,
+    SAY_CHEESE,
+    WELCOME,
+};
+
 class UI {
 public:
     UI();
@@ -518,48 +578,43 @@ public:
 
     void update();
 
-    void displayAccessGranted();
+    void setState(UIState newState);
 
-    void displayAccessDenied();
+    void setStateFor(int seconds, UIState newState);
 
 private:
-    static void uiTask(void *parameter);
-
-    void displayMenu();
+    [[noreturn]] static void uiTask(void *parameter);
 
     void handleKeyPress(char key);
 
-    void displayPasswordResult(bool correct);
+    void displayCurrentState();
 
-    void displayRecordingMessage();
+    void handleMenuKeyPress(char key);
 
-    void displayPlayingMessage();
-
-    void displayFingerprintNoMatch();
-
-    void displayMotionDetected();
-
-    void displayFingerprintMatched();
-
+    void handlePasswordKeyPress(char key);
 
     U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
     Keypad keypad;
-
-    static const char *menuItems[];
+    UIState currentState;
+    char enteredPassword[5]{};
+    bool enteringPassword;
+    int passwordIndex;
     static const int menuItemCount;
     int currentMenuItem;
-    bool notificationDisplayed;
-    bool enteringPassword;
-    bool passwordCorrect;
-    bool passwordChecked;
-    bool recordingAudio;
-    bool playingAudio;
-    char enteredPassword[5]{};
-    int passwordIndex;
     static const char correctPassword[];
-
     static EventDispatcher *eventDispatcher;
+    unsigned long lastStateChangeTime;
+    static const unsigned long STATE_TIMEOUT = 30000; // 30 seconds timeout
+    void displayPasswordAsAsterisks(char *password);
 
+    static void stateChangeTimerCallback(TimerHandle_t xTimer);
+
+    TimerHandle_t stateChangeTimer{};
+
+    struct StateChangeParams {
+        UIState originalState;
+        UIState temporaryState;
+    };
 };
 
 #endif // UI_H
@@ -573,6 +628,7 @@ private:
 #include "network_manager.h"
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include "logger.h"
 
 static const char *TAG = "AUDIO";
 
@@ -581,13 +637,13 @@ RingbufHandle_t Audio::recordBuffer = nullptr;
 RingbufHandle_t Audio::playBuffer = nullptr;
 TaskHandle_t Audio::i2sReaderTaskHandle = nullptr;
 TaskHandle_t Audio::i2sWriterTaskHandle = nullptr;
-TaskHandle_t Audio::audioProcessingTaskHandle = nullptr;
+TaskHandle_t Audio::audioTransmissionTaskHandle = nullptr;
 volatile bool Audio::isRecording = false;
 volatile bool Audio::isPlaying = false;
 
-// Audio batching configuration
-const size_t Audio::BATCH_SIZE = 4096; // Adjust this value based on your needs
-const TickType_t Audio::BATCH_TIMEOUT = pdMS_TO_TICKS(100); // 100ms timeout
+// Audio transmission configuration
+const size_t Audio::TRANSMISSION_BUFFER_SIZE = 16384;
+const TickType_t Audio::TRANSMISSION_TIMEOUT = pdMS_TO_TICKS(400); // 100ms timeout
 
 const i2s_config_t Audio::i2sConfigRx = {
         .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_RX),
@@ -634,56 +690,59 @@ const i2s_pin_config_t Audio::i2sPinConfigTx = {
 void Audio::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
 
-    recordBuffer = xRingbufferCreateNoSplit(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
-    playBuffer = xRingbufferCreateNoSplit(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
+    // Create ring buffers
+    recordBuffer = xRingbufferCreate(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
+    playBuffer = xRingbufferCreate(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
+
     if (recordBuffer == nullptr || playBuffer == nullptr) {
-        ESP_LOGE(TAG, "Failed to create ring buffers");
+        LOG_E(TAG, "Failed to create ring buffers");
         return;
     }
 
+    // Install and configure I2S drivers
     ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2sConfigRx, 0, nullptr));
     ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, &i2sPinConfigRx));
-
     ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_1, &i2sConfigTx, 0, nullptr));
     ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_1, &i2sPinConfigTx));
 
-    xTaskCreatePinnedToCore(i2sReaderTask, "I2S Reader Task", 8192, nullptr, 5, &i2sReaderTaskHandle, 0);
-    xTaskCreatePinnedToCore(i2sWriterTask, "I2S Writer Task", 8192, nullptr, 5, &i2sWriterTaskHandle, 1);
-    xTaskCreatePinnedToCore(audioProcessingTask, "Audio Processing Task", 8192, nullptr, 4, &audioProcessingTaskHandle, 1);
+    // Create tasks
+    xTaskCreatePinnedToCore(i2sReaderTask, "I2S Reader Task", 4096, nullptr, 5, &i2sReaderTaskHandle, 0);
+    xTaskCreatePinnedToCore(i2sWriterTask, "I2S Writer Task", 4096, nullptr, 5, &i2sWriterTaskHandle, 1);
+    xTaskCreatePinnedToCore(audioTransmissionTask, "Audio Transmission Task", 4096, nullptr, 4, &audioTransmissionTaskHandle, 1);
 
     // Initially suspend all tasks
     vTaskSuspend(i2sReaderTaskHandle);
     vTaskSuspend(i2sWriterTaskHandle);
-    vTaskSuspend(audioProcessingTaskHandle);
+    vTaskSuspend(audioTransmissionTaskHandle);
 
-    ESP_LOGI(TAG, "Audio system initialized");
+    LOG_I(TAG, "Audio system initialized");
 }
 
 void Audio::startRecording() {
     isRecording = true;
     vTaskResume(i2sReaderTaskHandle);
-    vTaskResume(audioProcessingTaskHandle);
-    ESP_LOGI(TAG, "Recording started");
+    vTaskResume(audioTransmissionTaskHandle);
+    LOG_I(TAG, "Recording started");
 }
 
 void Audio::stopRecording() {
     isRecording = false;
     vTaskSuspend(i2sReaderTaskHandle);
-    vTaskSuspend(audioProcessingTaskHandle);
-    ESP_LOGI(TAG, "Recording stopped");
+    vTaskSuspend(audioTransmissionTaskHandle);
+    LOG_I(TAG, "Recording stopped");
 }
 
 void Audio::startPlayback() {
     isPlaying = true;
     vTaskResume(i2sWriterTaskHandle);
-    ESP_LOGI(TAG, "Playback started");
+    vTaskDelay(pdMS_TO_TICKS(1000)); // Buffer for one second before starting playback
+    LOG_I(TAG, "Playback started");
 }
 
 void Audio::stopPlayback() {
     isPlaying = false;
+    LOG_I(TAG, "Stopping playback...");
     vTaskSuspend(i2sWriterTaskHandle);
-
-    // Clear the I2S DMA buffer
     i2s_zero_dma_buffer(I2S_NUM_1);
 
     // Clear the play buffer
@@ -693,7 +752,7 @@ void Audio::stopPlayback() {
         vRingbufferReturnItem(playBuffer, item);
     }
 
-    ESP_LOGI(TAG, "Playback stopped and buffers cleared");
+    LOG_I(TAG, "Playback stopped and buffers cleared");
 }
 
 void Audio::addDataToBuffer(const uint8_t *data, size_t length) {
@@ -705,10 +764,10 @@ void Audio::addDataToBuffer(const uint8_t *data, size_t length) {
 void Audio::i2sReaderTask(void *parameter) {
     size_t bytesRead = 0;
     const size_t bufferSize = DMA_BUF_LEN * 2;
-    uint8_t *buffer = (uint8_t *) heap_caps_malloc(bufferSize, MALLOC_CAP_DMA);
+    auto *buffer = (uint8_t *) heap_caps_malloc(bufferSize, MALLOC_CAP_DMA);
 
     if (!buffer) {
-        ESP_LOGE(TAG, "Failed to allocate memory for audio buffer");
+        LOG_E(TAG, "Failed to allocate memory for audio buffer");
         vTaskDelete(nullptr);
         return;
     }
@@ -745,48 +804,46 @@ void Audio::i2sWriterTask(void *parameter) {
     }
 }
 
-void Audio::audioProcessingTask(void *parameter) {
+void Audio::audioTransmissionTask(void *parameter) {
     size_t itemSize = 0;
     uint8_t *item = nullptr;
-    uint8_t *batchBuffer = (uint8_t *) heap_caps_malloc(BATCH_SIZE + 6, MALLOC_CAP_DMA);
-    size_t batchedSize = 0;
+    auto *transmissionBuffer = (uint8_t *) heap_caps_malloc(TRANSMISSION_BUFFER_SIZE + 6, MALLOC_CAP_DMA);
+    size_t bufferedSize = 0;
     TickType_t lastSendTime = xTaskGetTickCount();
 
-    if (!batchBuffer) {
-        ESP_LOGE(TAG, "Failed to allocate memory for batch buffer");
+    if (!transmissionBuffer) {
+        LOG_E(TAG, "Failed to allocate memory for transmission buffer");
         vTaskDelete(nullptr);
         return;
     }
 
-    memcpy(batchBuffer, "AUDIO:", 6);
+    memcpy(transmissionBuffer, "AUDIO:", 6);
 
     while (true) {
         if (isRecording) {
             item = (uint8_t *) xRingbufferReceive(recordBuffer, &itemSize, pdMS_TO_TICKS(10));
             if (item != nullptr) {
-                size_t remainingSpace = BATCH_SIZE - batchedSize;
+                size_t remainingSpace = TRANSMISSION_BUFFER_SIZE - bufferedSize;
                 size_t copySize = (itemSize < remainingSpace) ? itemSize : remainingSpace;
-
-                memcpy(batchBuffer + 6 + batchedSize, item, copySize);
-                batchedSize += copySize;
-
+                memcpy(transmissionBuffer + 6 + bufferedSize, item, copySize);
+                bufferedSize += copySize;
                 vRingbufferReturnItem(recordBuffer, item);
 
-                if (batchedSize >= BATCH_SIZE || (xTaskGetTickCount() - lastSendTime) >= BATCH_TIMEOUT) {
-                    NetworkManager::sendAudioChunk(batchBuffer, batchedSize + 6);
-                    batchedSize = 0;
+                if (bufferedSize >= TRANSMISSION_BUFFER_SIZE || (xTaskGetTickCount() - lastSendTime) >= TRANSMISSION_TIMEOUT) {
+                    NetworkManager::sendAudioChunk(transmissionBuffer, bufferedSize + 6);
+                    bufferedSize = 0;
                     lastSendTime = xTaskGetTickCount();
                 }
             }
         } else {
-            // If not recording, reset the batched size and last send time
-            batchedSize = 0;
+            // If not recording, reset the buffered size and last send time
+            bufferedSize = 0;
             lastSendTime = xTaskGetTickCount();
         }
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    heap_caps_free(batchBuffer);
+    heap_caps_free(transmissionBuffer);
 }
 
 #########################################
@@ -889,26 +946,6 @@ void EventDispatcher::dispatchEvent(const Event &event) {
     }
 }
 
-void EventDispatcher::removeCallback(EventType type) {
-    if (type >= MAX_EVENTS) {
-        LOG_E(TAG, "Event type out of range: %d", type);
-        return;
-    }
-
-    callbacks.erase(
-            std::remove_if(callbacks.begin(), callbacks.end(),
-                           [type](const CallbackEntry &entry) { return entry.type == type; }),
-            callbacks.end()
-    );
-
-    if (callbacks.end() == std::find_if(callbacks.begin(), callbacks.end(),
-                                        [type](const CallbackEntry &entry) { return entry.type == type; })) {
-        registeredEvents.reset(type);
-    }
-
-    LOG_D(TAG, "Removed callback(s) for event type: %d", type);
-}
-
 ##########################################
 
 ############# src\event_handler.cpp #############
@@ -924,45 +961,82 @@ EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &g
         : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
-    dispatcher.registerCallback(CMD_TG_START_RECORDING, [this](const Event &e) { handleRecordStart(e); });
-    dispatcher.registerCallback(CMD_TG_STOP_RECORDING, [this](const Event &e) { handleRecordStop(e); });
-    dispatcher.registerCallback(CMD_TG_START_PLAYING, [this](const Event &e) { handlePlaybackStart(e); });
-    dispatcher.registerCallback(CMD_TG_STOP_PLAYING, [this](const Event &e) { handlePlaybackStop(e); });
-    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
+    dispatcher.registerCallback(CMD_TG_AUDIO, [this](const Event &e) { handleTelegramAudioCommand(e); });
+    dispatcher.registerCallback(CMD_ESP_AUDIO, [this](const Event &e) { handleESPAudioCommand(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
+
+    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
+
+    dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleFingerprintMatch(e); });
     dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
+
     dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
     dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(GATE_CLOSED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_ON, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_OFF, [this](const Event &e) { handleChangeStateSuccess(e); });
-    dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleResidentAuthorized(e); });
-    dispatcher.registerCallback(PASSWORD_VALID, [this](const Event &e) { handleResidentAuthorized(e); });
-    dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleGrantAccess(e); });
-    dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleDenyAccess(e); });
+
+    dispatcher.registerCallback(PASSWORD_VALID, [this](const Event &e) { handlePasswordValid(e); });
+    dispatcher.registerCallback(PASSWORD_INVALID, [this](const Event &e) { handlePasswordInvalid(e); });
+
+    dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleAccessGranted(e); });
+    dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleAccessDenied(e); });
+
     dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
+    dispatcher.registerCallback(PERSON_DETECTED, [this](const Event &e) { handlePersonDetected(e); });
+
+    dispatcher.registerCallback(VISITOR_ENTERED, [this](const Event &e) { handleVisitorEntered(e); });
 }
 
 
 void EventHandler::handleTelegramAudioCommand(const Event &event) {
-    audio.startRecording();
-    LOG_I(TAG, "Recording started");
+    std::string action = event.data;
+
+    if (action == "start_recording") {
+        audio.startRecording();
+        LOG_I(TAG, "Recording started from Telegram.");
+    } else if (action == "stop_recording") {
+        audio.stopRecording();
+        LOG_I(TAG, "Recording stopped from Telegram.");
+    } else if (action == "start_playing") {
+        audio.startPlayback();
+        LOG_I(TAG, "Started playback from Telegram.");
+    } else if (action == "stop_playing") {
+        audio.stopPlayback();
+        LOG_I(TAG, "Stopped playback from Telegram.");
+    }
 }
 
-void EventHandler::handleRecordStop(const Event &event) {
-    audio.stopRecording();
-    LOG_I(TAG, "Recording stopped");
+void EventHandler::handleESPAudioCommand(const Event &event) {
+    std::string action = event.data;
+
+    StaticJsonDocument<200> data;
+    if (action == "start_recording") {
+        audio.startRecording();
+        data["action"] = "start_recording";
+        network.sendEvent("audio", data.as<JsonObject>());
+        LOG_I(TAG, "Recording started from ESP.");
+
+    } else if (action == "stop_recording") {
+        audio.stopRecording();
+        data["action"] = "stop_recording";
+        network.sendEvent("audio", data.as<JsonObject>());
+        LOG_I(TAG, "Recording stopped from ESP.");
+
+    } else if (action == "start_playing") {
+        audio.startPlayback();
+        data["action"] = "start_playing";
+        network.sendEvent("audio", data.as<JsonObject>());
+        LOG_I(TAG, "Started playback from ESP.");
+
+    } else if (action == "stop_playing") {
+        audio.stopPlayback();
+        data["action"] = "stop_playing";
+        network.sendEvent("audio", data.as<JsonObject>());
+        LOG_I(TAG, "Stopped playback from ESP.");
+    }
 }
 
-void EventHandler::handlePlaybackStart(const Event &event) {
-    audio.startPlayback();
-    LOG_I(TAG, "Playback started");
-}
-
-void EventHandler::handlePlaybackStop(const Event &event) {
-    audio.stopPlayback();
-    LOG_I(TAG, "Playback stopped");
-}
 
 void EventHandler::handleWebSocketConnected(const Event &event) {
     network.sendInitMessage();
@@ -973,14 +1047,23 @@ void EventHandler::handleAudioDataReceived(const Event &event) {
 }
 
 void EventHandler::handleFingerprintMatch(const Event &event) {
+    ui.setStateFor(2, UIState::FINGERPRINT_MATCHED);
+    handleResidentAuthorized(event);
     LOG_I(TAG, "Fingerprint match found!");
-    gate.openGate();
-    led.turnOn();
 }
 
 void EventHandler::handleFingerprintNoMatch(const Event &event) {
+    ui.setStateFor(2, UIState::FINGERPRINT_NO_MATCH);
     LOG_I(TAG, "Fingerprint no match found!");
-    led.turnOff();
+}
+
+void EventHandler::handlePasswordValid(const Event &event) {
+    handleResidentAuthorized(event);
+    LOG_I(TAG, "Password correct!");
+}
+
+void EventHandler::handlePasswordInvalid(const Event &event) {
+    LOG_I(TAG, "Password incorrect!");
 }
 
 void EventHandler::handleChangeState(const Event &event) {
@@ -1015,20 +1098,36 @@ void EventHandler::handleChangeStateSuccess(const Event &event) {
 
 void EventHandler::handleResidentAuthorized(const Event &event) {
     gate.openGate();
+    LOG_I(TAG, "Resident authorized!");
 }
 
 void EventHandler::handleAccessGranted(const Event &event) {
+    ui.setState(UIState::ACCESS_GRANTED);
     gate.openGate();
-    ui.displayAccessGranted();
+    LOG_I(TAG, "Access granted!");
 }
 
 void EventHandler::handleAccessDenied(const Event &event) {
-    ui.displayAccessDenied();
+    ui.setState(UIState::ACCESS_DENIED);
+    LOG_I(TAG, "Access denied!");
 }
 
 void EventHandler::handleMotionDetected(const Event &event) {
+    ui.setStateFor(2, UIState::MOTION_DETECTED);
     espNow.sendCommand("capture_image");
     network.sendEvent("motion_detected", JsonObject());
+    LOG_I(TAG, "Motion detected and visitor identification initiated!");
+}
+
+void EventHandler::handlePersonDetected(const Event &event) {
+    network.sendEvent("person_detected", JsonObject());
+    LOG_I(TAG, "Person detected!");
+}
+
+void EventHandler::handleVisitorEntered(const Event &event) {
+    LOG_I(TAG, "Visitor entered!");
+    vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for 5 seconds before closing the gate
+    gate.closeGate();
 }
 
 
@@ -1110,17 +1209,17 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 static const char *TAG = "GATE_CONTROL";
 
 EventDispatcher *GateControl::eventDispatcher = nullptr;
-volatile bool GateControl::_isGateOpen = false;
-SemaphoreHandle_t GateControl::_gateStateMutex = xSemaphoreCreateMutex(); // Initialize the mutex
+volatile bool GateControl::isGateOpen = false;
+SemaphoreHandle_t GateControl::gateStateMutex = xSemaphoreCreateMutex();
 
 GateControl::GateControl(int motorPin1, int motorPin2, int enablePin)
-        : _motorPin1(motorPin1), _motorPin2(motorPin2), _enablePin(enablePin) {}
+        : motorPin1(motorPin1), motorPin2(motorPin2), enablePin(enablePin) {}
 
 void GateControl::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pinMode(_motorPin1, OUTPUT);
-    pinMode(_motorPin2, OUTPUT);
-    pinMode(_enablePin, OUTPUT);
+    pinMode(motorPin1, OUTPUT);
+    pinMode(motorPin2, OUTPUT);
+    pinMode(enablePin, OUTPUT);
 
     xTaskCreate(gateControlTask, "Gate Control Task", 4096, this, 1, nullptr);
 
@@ -1128,69 +1227,58 @@ void GateControl::begin(EventDispatcher &dispatcher) {
 }
 
 void GateControl::openGate() {
-    if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        if (!_isGateOpen && !_isMoving) { // Check if gate is closed and not moving
-            digitalWrite(_motorPin1, HIGH);
-            digitalWrite(_motorPin2, LOW);
-            digitalWrite(_enablePin, HIGH);
-            _movementStartTime = millis();
-            _isMoving = true;
+    if (xSemaphoreTake(gateStateMutex, portMAX_DELAY) == pdTRUE) {
+        if (!isGateOpen && !isMoving) {
+            digitalWrite(motorPin1, HIGH);
+            digitalWrite(motorPin2, LOW);
+            digitalWrite(enablePin, HIGH);
+            movementStartTime = millis();
+            isMoving = true;
             LOG_I(TAG, "Gate opening started...");
         } else {
             LOG_I(TAG, "Gate is already open or in motion.");
         }
-        xSemaphoreGive(_gateStateMutex);
+        xSemaphoreGive(gateStateMutex);
     }
 }
 
 void GateControl::closeGate() {
-    if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        if (_isGateOpen && !_isMoving) { // Check if gate is open and not moving
-            digitalWrite(_motorPin1, LOW);
-            digitalWrite(_motorPin2, HIGH);
-            digitalWrite(_enablePin, HIGH);
-            _movementStartTime = millis();
-            _isMoving = true;
+    if (xSemaphoreTake(gateStateMutex, portMAX_DELAY) == pdTRUE) {
+        if (isGateOpen && !isMoving) {
+            digitalWrite(motorPin1, LOW);
+            digitalWrite(motorPin2, HIGH);
+            digitalWrite(enablePin, HIGH);
+            movementStartTime = millis();
+            isMoving = true;
             LOG_I(TAG, "Gate closing started...");
         } else {
             LOG_I(TAG, "Gate is already closed or in motion.");
         }
-        xSemaphoreGive(_gateStateMutex);
+        xSemaphoreGive(gateStateMutex);
     }
 }
 
 bool GateControl::isGateMoving() const {
-    return _isMoving;
+    return isMoving;
 }
 
-// Make isGateOpen() non-const and protect with mutex
-bool GateControl::isGateOpen() {
-    if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        bool gateState = _isGateOpen;
-        xSemaphoreGive(_gateStateMutex);
-        return gateState;
-    } else {
-        // Handle mutex failure (e.g., return a default value)
-        return false;
-    }
-}
 
 void GateControl::gateControlTask(void *parameter) {
     auto *gateControl = static_cast<GateControl *>(parameter);
 
     while (true) {
-        if (gateControl->isGateMoving() && millis() - gateControl->_movementStartTime > 7000) {
-            digitalWrite(gateControl->_enablePin, LOW);
-            gateControl->_isMoving = false;
+        if (gateControl->isGateMoving() && millis() - gateControl->movementStartTime > 7000) {
+            digitalWrite(gateControl->enablePin, LOW);
+            gateControl->isMoving = false;
 
-            // Update _isGateOpen within the mutex
-            if (xSemaphoreTake(_gateStateMutex, portMAX_DELAY) == pdTRUE) {
-                _isGateOpen = !_isGateOpen; // Toggle the state
-                xSemaphoreGive(_gateStateMutex);
+            // Update isGateOpen within the mutex
+            if (xSemaphoreTake(gateStateMutex, portMAX_DELAY) == pdTRUE) {
+                isGateOpen = !isGateOpen; // Toggle the state
+                xSemaphoreGive(gateStateMutex);
             }
 
-            // Dispatch events after updating _isGateOpen
-            if (_isGateOpen) {
+            // Dispatch events after updating isGateOpen
+            if (isGateOpen) {
                 eventDispatcher->dispatchEvent({GATE_OPENED, ""});
             } else {
                 eventDispatcher->dispatchEvent({GATE_CLOSED, ""});
@@ -1198,6 +1286,10 @@ void GateControl::gateControlTask(void *parameter) {
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
+}
+
+bool GateControl::getIsGateOpen() {
+    return isGateOpen;
 }
 
 
@@ -1212,23 +1304,23 @@ static const char *TAG = "LED_CONTROL";
 
 EventDispatcher *LEDControl::eventDispatcher = nullptr;
 
-LEDControl::LEDControl(int pin) : _pin(pin) {}
+LEDControl::LEDControl(int pin) : pin(pin) {}
 
 void LEDControl::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pinMode(_pin, OUTPUT);
-    digitalWrite(_pin, LOW);
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
     LOG_I(TAG, "LED control initialized");
 }
 
 void LEDControl::turnOn() {
-//    digitalWrite(_pin, HIGH);
+//    digitalWrite(pin, HIGH);
     LOG_I(TAG, "LED turned on");
     eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
 }
 
 void LEDControl::turnOff() {
-    digitalWrite(_pin, LOW);
+    digitalWrite(pin, LOW);
     LOG_I(TAG, "LED turned off");
     eventDispatcher->dispatchEvent({LED_TURNED_OFF, ""});
 }
@@ -1307,12 +1399,12 @@ void setup() {
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
     audio.begin(eventDispatcher);
-//    fingerprintHandler.begin(eventDispatcher);
-//    gateControl.begin(eventDispatcher);
-//    pirSensor.begin(eventDispatcher);
-//    breakBeamSensor.begin(eventDispatcher);
-//    ledControl.begin(eventDispatcher);
-//    espNow.begin(eventDispatcher);
+    fingerprintHandler.begin(eventDispatcher);
+    gateControl.begin(eventDispatcher);
+    pirSensor.begin(eventDispatcher);
+    breakBeamSensor.begin(eventDispatcher);
+    ledControl.begin(eventDispatcher);
+    espNow.begin(eventDispatcher);
 
     LOG_I("MAIN", "System initialization complete");
 }
@@ -1368,6 +1460,7 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
 
 void NetworkManager::loop() {
     webSocket.loop();
+    vTaskDelay(pdMS_TO_TICKS(5));
 }
 
 void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
@@ -1400,17 +1493,8 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                 JsonObject data = doc["data"];
                 const char *action = data["action"];
 
-                if (strcmp(action, "start_recording") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_TG_START_RECORDING, ""});
-                } else if (strcmp(action, "stop_recording") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_TG_STOP_RECORDING, ""});
-                } else if (strcmp(action, "start_playing") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_TG_START_PLAYING, ""});
-                } else if (strcmp(action, "stop_playing") == 0) {
-                    eventDispatcher->dispatchEvent({CMD_TG_STOP_PLAYING, ""});
-                } else {
-                    LOG_W(TAG, "Unknown audio action: %s", action);
-                }
+                eventDispatcher->dispatchEvent({CMD_TG_AUDIO, action});
+
             } else if (strcmp(event_type, "change_state") == 0) {
                 JsonObject data = doc["data"];
                 if (!data.isNull()) {
@@ -1472,11 +1556,11 @@ static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
 // PIR Sensor Implementation
 EventDispatcher *PIRSensor::eventDispatcher = nullptr;
 
-PIRSensor::PIRSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(LOW), _state(LOW) {}
+PIRSensor::PIRSensor(int pin) : pin(pin), lastDebounceTime(0), lastState(LOW), state(LOW) {}
 
 void PIRSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pinMode(_pin, INPUT);
+    pinMode(pin, INPUT);
     xTaskCreate(pirTask, "PIR Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_PIR, "PIR sensor initialized");
 }
@@ -1488,17 +1572,17 @@ void PIRSensor::pirTask(void *parameter) {
     unsigned long lastTriggerTime = 0;
 
     while (true) {
-        int reading = digitalRead(pirSensor->_pin);
+        int reading = digitalRead(pirSensor->pin);
 
-        if (reading != pirSensor->_lastState) {
-            pirSensor->_lastDebounceTime = millis();
+        if (reading != pirSensor->lastState) {
+            pirSensor->lastDebounceTime = millis();
         }
 
-        if ((millis() - pirSensor->_lastDebounceTime) > debounceDelay) {
-            if (reading != pirSensor->_state) {
-                pirSensor->_state = reading;
+        if ((millis() - pirSensor->lastDebounceTime) > debounceDelay) {
+            if (reading != pirSensor->state) {
+                pirSensor->state = reading;
 
-                if (pirSensor->_state == HIGH && (millis() - lastTriggerTime) > cooldownTime) {
+                if (pirSensor->state == HIGH && (millis() - lastTriggerTime) > cooldownTime) {
                     LOG_I(TAG_PIR, "Motion detected");
                     eventDispatcher->dispatchEvent({MOTION_DETECTED, ""});
                     lastTriggerTime = millis();
@@ -1506,7 +1590,7 @@ void PIRSensor::pirTask(void *parameter) {
             }
         }
 
-        pirSensor->_lastState = reading;
+        pirSensor->lastState = reading;
         vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
     }
 }
@@ -1514,38 +1598,38 @@ void PIRSensor::pirTask(void *parameter) {
 // Break Beam Sensor Implementation
 EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
 
-BreakBeamSensor::BreakBeamSensor(int pin) : _pin(pin), _lastDebounceTime(0), _lastState(HIGH), _state(HIGH) {}
+BreakBeamSensor::BreakBeamSensor(int pin) : pin(pin), lastDebounceTime(0), lastState(HIGH), state(HIGH) {}
 
 void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pinMode(_pin, INPUT_PULLUP);
+    pinMode(pin, INPUT_PULLUP);
     xTaskCreate(breakBeamTask, "Break Beam Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_BREAK_BEAM, "Break beam sensor initialized");
 }
 
-void BreakBeamSensor::breakBeamTask(void *parameter) {
+    void BreakBeamSensor::breakBeamTask(void *parameter) {
     auto *breakBeamSensor = static_cast<BreakBeamSensor *>(parameter);
-    const unsigned long debounceDelay = 50; // 50ms debounce time
+    const unsigned long debounceDelay = 50;
 
     while (true) {
-        int reading = digitalRead(breakBeamSensor->_pin);
+        int reading = digitalRead(breakBeamSensor->pin);
 
-        if (reading != breakBeamSensor->_lastState) {
-            breakBeamSensor->_lastDebounceTime = millis();
+        if (reading != breakBeamSensor->lastState) {
+            breakBeamSensor->lastDebounceTime = millis();
         }
 
-        if ((millis() - breakBeamSensor->_lastDebounceTime) > debounceDelay) {
-            if (reading != breakBeamSensor->_state) {
-                breakBeamSensor->_state = reading;
+        if ((millis() - breakBeamSensor->lastDebounceTime) > debounceDelay) {
+            if (reading != breakBeamSensor->state) {
+                breakBeamSensor->state = reading;
 
-                if (breakBeamSensor->_state == LOW) {
+                if (breakBeamSensor->state == LOW) {
                     LOG_I(TAG_BREAK_BEAM, "Break beam triggered");
-                    eventDispatcher->dispatchEvent({BREAK_BEAM_TRIGGERED, ""});
+                    eventDispatcher->dispatchEvent({VISITOR_ENTERED, ""});
                 }
             }
         }
 
-        breakBeamSensor->_lastState = reading;
+        breakBeamSensor->lastState = reading;
         vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
     }
 }
@@ -1558,58 +1642,61 @@ void BreakBeamSensor::breakBeamTask(void *parameter) {
 #include "config.h"
 #include "logger.h"
 #include <Wire.h>
+#include "icons.h"
 
 static const char *TAG = "UI";
 
-// Define keypad size
+// Keypad configuration
 const byte ROWS = 4;
 const byte COLS = 3;
-
 char hexaKeys[ROWS][COLS] = {
-        {'1', '2', '3',},
-        {'4', '5', '6',},
-        {'7', '8', '9',},
-        {'*', '0', '#',}
+        {'1', '2', '3'},
+        {'4', '5', '6'},
+        {'7', '8', '9'},
+        {'*', '0', '#'}
 };
-
 byte rowPins[ROWS] = {4, 5, 6, 7};
 byte colPins[COLS] = {15, 16, 17};
 
-const char *UI::menuItems[] = {"NOTIFY OWNER", "ENTER PASSWORD", "RECORD AUDIO", "PLAY RECEIVED AUDIO"};
-const int UI::menuItemCount = sizeof(menuItems) / sizeof(menuItems[0]);
+const int UI::menuItemCount = 4;
 const char UI::correctPassword[] = "1234";
-
 EventDispatcher *UI::eventDispatcher = nullptr;
 
 UI::UI() : u8g2(U8G2_R0, U8X8_PIN_NONE),
            keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS),
+           currentState(UIState::WELCOME),
            currentMenuItem(0),
-           notificationDisplayed(false),
-           enteringPassword(false),
-           passwordCorrect(false),
-           passwordChecked(false),
-           recordingAudio(false),
-           playingAudio(false),
-           passwordIndex(0) {
-
+           passwordIndex(0),
+           lastStateChangeTime(0),
+           enteringPassword(false) {
     memset(enteredPassword, 0, sizeof(enteredPassword));
 }
 
 void UI::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
     Wire.begin(SDA_PIN, SCL_PIN);
-    u8g2.setBusClock(400000);  // Set I2C clock speed to 400kHz
+    u8g2.setBusClock(400000);
     u8g2.setI2CAddress(I2C_ADDRESS * 2);
     u8g2.begin();
+
+    // Create the timer but don't start it yet
+    stateChangeTimer = xTimerCreate(
+            "StateChangeTimer",
+            pdMS_TO_TICKS(1000), // Will be updated when timer is used
+            pdFALSE, // One-shot timer
+            this,
+            stateChangeTimerCallback
+    );
+
     xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
     LOG_I(TAG, "UI initialized");
 }
 
-void UI::uiTask(void *parameter) {
+[[noreturn]] void UI::uiTask(void *parameter) {
     UI *ui = static_cast<UI *>(parameter);
     while (true) {
         ui->update();
-        vTaskDelay(pdMS_TO_TICKS(500)); // Update every 500ms
+        vTaskDelay(pdMS_TO_TICKS(40));
     }
 }
 
@@ -1619,187 +1706,317 @@ void UI::update() {
         LOG_I(TAG, "Key pressed: %c", key);
         handleKeyPress(key);
     }
-    displayMenu();
+
+    // If the current state has been active for more than the timeout, go back to the welcome screen
+    // Unless we are recording or playing audio
+    if (millis() - lastStateChangeTime > STATE_TIMEOUT && currentState != UIState::WELCOME && currentState != UIState::RECORDING_AUDIO &&
+        currentState != UIState::PLAYING_AUDIO) {
+        setState(UIState::WELCOME);
+    }
+
+    if (!enteringPassword) {
+        displayCurrentState();
+    }
+}
+
+void UI::setState(UIState newState) {
+    currentState = newState;
+    lastStateChangeTime = millis();
+    LOG_I(TAG, "UI state changed to: %d", static_cast<int>(newState));
+}
+
+void UI::setStateFor(int seconds, UIState newState) {
+    if (stateChangeTimer == nullptr) {
+        LOG_E(TAG, "State change timer not initialized");
+        return;
+    }
+
+    // Stop the timer if it's already running
+    xTimerStop(stateChangeTimer, 0);
+
+    // Save the current state
+    auto *params = new StateChangeParams{currentState, newState};
+
+    // Set the new temporary state
+    setState(newState);
+
+    // Configure and start the timer
+    xTimerChangePeriod(stateChangeTimer, pdMS_TO_TICKS(seconds * 1000), 0);
+    xTimerStart(stateChangeTimer, 0);
+
+    // Pass the params to the timer
+    vTimerSetTimerID(stateChangeTimer, params);
+
+    LOG_I(TAG, "UI state changed to %d for %d seconds", static_cast<int>(newState), seconds);
+}
+
+void UI::stateChangeTimerCallback(TimerHandle_t xTimer) {
+    UI *ui = static_cast<UI *>(pvTimerGetTimerID(xTimer));
+    auto *params = static_cast<StateChangeParams *>(pvTimerGetTimerID(xTimer));
+
+    if (ui && params) {
+        ui->setState(params->originalState);
+        LOG_I(TAG, "UI state changed back to %d", static_cast<int>(params->originalState));
+        delete params;
+    }
 }
 
 void UI::handleKeyPress(char key) {
-    if (enteringPassword) {
-        if (key >= '0' && key <= '9' && passwordIndex < 4) {
-            enteredPassword[passwordIndex++] = key;
-            enteredPassword[passwordIndex] = '\0';
-        } else if (key == '*') {
-            passwordIndex = 0;
-            enteredPassword[0] = '\0';
-        } else if (key == '#') {
-            passwordCorrect = (strcmp(enteredPassword, correctPassword) == 0);
-            passwordChecked = true;
-            enteringPassword = false;
-            displayPasswordResult(passwordCorrect);
-            vTaskDelay(pdMS_TO_TICKS(2000));
-            passwordChecked = false;
-            passwordIndex = 0;
-            enteredPassword[0] = '\0';
-        }
-    } else if (recordingAudio || playingAudio) {
-        if (key == '1') {
-            recordingAudio = false;
-            playingAudio = false;
-        }
-    } else {
-        switch (key) {
-            case '2':
-                currentMenuItem = (currentMenuItem - 1 + menuItemCount) % menuItemCount;
-                notificationDisplayed = false;
-                break;
-            case '8':
-                currentMenuItem = (currentMenuItem + 1) % menuItemCount;
-                notificationDisplayed = false;
-                break;
-            case '5':
-                if (currentMenuItem == 0) {
-                    notificationDisplayed = true;
-//                    eventDispatcher->dispatchEvent({EN_CMD_CAPTURE_IMAGE, ""});
-                } else if (currentMenuItem == 1) {
-                    enteringPassword = true;
-                } else if (currentMenuItem == 2) {
-                    recordingAudio = true;
-//                    eventDispatcher->dispatchEvent({RECORD_START, ""});
-                } else if (currentMenuItem == 3) {
-                    playingAudio = true;
-//                    eventDispatcher->dispatchEvent({PLAYBACK_START, ""});
-                }
-                break;
-        }
+    switch (currentState) {
+        case UIState::WELCOME:
+            // Pressing any key will take us to the menu
+            setState(UIState::MENU_NOTIFY_OWNER);
+            break;
+        case UIState::MENU_NOTIFY_OWNER:
+        case UIState::MENU_ENTER_PASSWORD:
+        case UIState::MENU_RECORD_AUDIO:
+        case UIState::MENU_PLAY_AUDIO:
+            handleMenuKeyPress(key);
+            break;
+        case UIState::ENTER_PASSWORD:
+            enteringPassword = true;
+            handlePasswordKeyPress(key);
+            break;
+        case UIState::RECORDING_AUDIO:
+            if (key == '1') {
+                eventDispatcher->dispatchEvent({CMD_ESP_AUDIO, "stop_recording"});
+                vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for one second
+                setState(UIState::MENU_NOTIFY_OWNER); // Go back to the menu
+            }
+            break;
+        case UIState::PLAYING_AUDIO:
+            if (key == '1') {
+                eventDispatcher->dispatchEvent({CMD_ESP_AUDIO, "stop_playing"});
+                vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for one second
+                setState(UIState::MENU_NOTIFY_OWNER); // Go back to the menu
+            }
+            break;
+        case UIState::PASSWORD_CORRECT:
+        case UIState::PASSWORD_INCORRECT:
+        case UIState::OWNER_NOTIFIED:
+        case UIState::ACCESS_GRANTED:
+        case UIState::ACCESS_DENIED:
+        case UIState::MOTION_DETECTED:
+        case UIState::FINGERPRINT_MATCHED:
+        case UIState::FINGERPRINT_NO_MATCH:
+        case UIState::SAY_CHEESE:
+            // Pressing any key will take us back to the menu
+            setState(UIState::MENU_NOTIFY_OWNER);
+            break;
+        default:
+            break;
     }
 }
 
-void UI::displayMenu() {
-    u8g2.clearBuffer();
+void UI::handleMenuKeyPress(char key) {
+    switch (key) {
+        case '2':
+            currentMenuItem = (currentMenuItem - 1 + menuItemCount) % menuItemCount;
+            setState(static_cast<UIState>(static_cast<int>(UIState::MENU_NOTIFY_OWNER) + currentMenuItem));
+            break;
+        case '8':
+            currentMenuItem = (currentMenuItem + 1) % menuItemCount;
+            setState(static_cast<UIState>(static_cast<int>(UIState::MENU_NOTIFY_OWNER) + currentMenuItem));
+            break;
+        case '5':
+            switch (currentState) {
+                case UIState::MENU_NOTIFY_OWNER:
+                    setState(UIState::OWNER_NOTIFIED);
+                    eventDispatcher->dispatchEvent({PERSON_DETECTED, ""});
+                    break;
+                case UIState::MENU_ENTER_PASSWORD:
+                    setState(UIState::ENTER_PASSWORD);
+                    break;
+                case UIState::MENU_RECORD_AUDIO:
+                    setState(UIState::RECORDING_AUDIO);
+                    eventDispatcher->dispatchEvent({CMD_ESP_AUDIO, "start_recording"});
+                    break;
+                case UIState::MENU_PLAY_AUDIO:
+                    setState(UIState::PLAYING_AUDIO);
+                    eventDispatcher->dispatchEvent({CMD_ESP_AUDIO, "start_playing"});
+                    break;
+            }
+            break;
+        default:
+            LOG_I(TAG, "Invalid key: %c", key);
+            break;
+    }
+}
 
-    if (notificationDisplayed && currentMenuItem == 0) {
-        u8g2.setFont(u8g2_font_profont17_tr);
-        u8g2.drawStr(15, 32, "OWNER HAS BEEN");
-        u8g2.drawStr(35, 47, "NOTIFIED");
-    } else if (enteringPassword && currentMenuItem == 1) {
-        u8g2.setFont(u8g2_font_profont17_tr);
-        u8g2.drawStr(15, 32, "ENTER PASSWORD");
-        u8g2.drawStr(35, 47, enteredPassword);
-    } else if (recordingAudio && currentMenuItem == 2) {
-        displayRecordingMessage();
-    } else if (playingAudio && currentMenuItem == 3) {
-        displayPlayingMessage();
-    } else {
-        switch (currentMenuItem) {
-            case 0:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_notification_bell_bits);
-                u8g2.drawStr(33, 25, "NOTIFY");
-                u8g2.drawStr(33, 40, "OWNER");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 12, 1, 3);
-                break;
-            case 1:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_device_lock_bits);
-                u8g2.drawStr(33, 25, "ENTER");
-                u8g2.drawStr(33, 40, "PASSWORD");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 21, 1, 3);
-                break;
-            case 2:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_microphone_bits);
-                u8g2.drawStr(33, 25, "RECORD");
-                u8g2.drawStr(33, 40, "AUDIO");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 34, 1, 3);
-                break;
-            case 3:
-                u8g2.setFont(u8g2_font_profont17_tr);
-                u8g2.drawXBMP(7, 19, 16, 16, image_volume_loud_bits);
-                u8g2.drawStr(33, 20, "PLAY");
-                u8g2.drawStr(33, 36, "RECEIVED");
-                u8g2.drawLine(120, 8, 120, 54);
-                u8g2.drawEllipse(120, 48, 1, 3);
-                u8g2.drawStr(33, 52, "AUDIO");
-                break;
+void UI::handlePasswordKeyPress(char key) {
+    if (key >= '0' && key <= '6' && passwordIndex < 4) {
+        enteredPassword[passwordIndex++] = key;
+        enteredPassword[passwordIndex] = '\0';
+        displayPasswordAsAsterisks(enteredPassword);
+    } else if (key == '7') {
+        if (passwordIndex > 0) {
+            enteredPassword[--passwordIndex] = '\0';
+            displayPasswordAsAsterisks(enteredPassword);
         }
+    } else if (key == '9') {
+        enteringPassword = false;
+        bool passwordCorrect = (strcmp(enteredPassword, correctPassword) == 0);
+        eventDispatcher->dispatchEvent({passwordCorrect ? PASSWORD_VALID : PASSWORD_INVALID, ""});
+        setState(passwordCorrect ? UIState::PASSWORD_CORRECT : UIState::PASSWORD_INCORRECT);
+        passwordIndex = 0;
+        memset(enteredPassword, 0, sizeof(enteredPassword));
     }
-
-    u8g2.sendBuffer();
 }
 
-void UI::displayPasswordResult(bool correct) {
+void UI::displayCurrentState() {
     u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    if (correct) {
-        u8g2.drawStr(40, 32, "PASSWORD");
-        u8g2.drawStr(50, 47, "CORRECT");
-        eventDispatcher->dispatchEvent({PASSWORD_VALID, ""});
-    } else {
-        u8g2.drawStr(40, 32, "PASSWORD");
-        u8g2.drawStr(50, 47, "WRONG");
+    u8g2.setFontMode(1);
+    u8g2.setBitmapMode(1);
+
+    switch (currentState) {
+        case UIState::MENU_NOTIFY_OWNER:
+            u8g2.drawLine(116, 7, 116, 55);
+            u8g2.drawBox(113, 9, 7, 11);
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(42, 45, "OWNER");
+            u8g2.drawStr(42, 29, "NOTIFY");
+            u8g2.setDrawColor(2);
+            u8g2.drawXBMP(14, 24, 16, 16, image_notification_bell_bits);
+            break;
+        case UIState::MENU_ENTER_PASSWORD:
+            u8g2.drawXBMP(11, 24, 16, 16, image_device_lock_bits);
+            u8g2.drawLine(116, 7, 116, 55);
+            u8g2.drawBox(113, 18, 7, 11);
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(34, 28, "ENTER");
+            u8g2.drawStr(34, 45, "PASSWORD");
+            break;
+        case UIState::MENU_RECORD_AUDIO:
+            u8g2.drawXBMP(11, 24, 16, 16, image_microphone_bits);
+            u8g2.drawLine(116, 7, 116, 55);
+            u8g2.drawBox(113, 32, 7, 11);
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(39, 28, "RECORD");
+            u8g2.drawStr(39, 45, "AUDIO");
+            break;
+        case UIState::MENU_PLAY_AUDIO:
+            u8g2.drawLine(116, 7, 116, 55);
+            u8g2.drawBox(113, 42, 7, 11);
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(39, 28, "PLAY");
+            u8g2.drawStr(39, 45, "AUDIO");
+            u8g2.drawXBMP(9, 24, 20, 16, image_volume_loud_bits);
+            break;
+        case UIState::OWNER_NOTIFIED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(22, 21, "OWNER HAS");
+            u8g2.drawStr(28, 53, "NOTIFIED");
+            u8g2.drawStr(46, 37, "BEEN");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::ENTER_PASSWORD:
+            u8g2.setFont(u8g2_font_t0_16b_tr);
+            u8g2.drawStr(8, 26, "ENTER PASSWORD");
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(45, 47, "");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::RECORDING_AUDIO:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(10, 26, "RECORDING...");
+            u8g2.setFont(u8g2_font_profont15_tr);
+            u8g2.drawStr(11, 55, "PRESS 1 TO STOP");
+            u8g2.drawFrame(1, 1, 126, 37);
+            break;
+        case UIState::PLAYING_AUDIO:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(20, 26, "PLAYING...");
+            u8g2.setFont(u8g2_font_profont15_tr);
+            u8g2.drawStr(11, 55, "PRESS 1 TO STOP");
+            u8g2.drawFrame(1, 1, 126, 37);
+            break;
+        case UIState::ACCESS_GRANTED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(34, 29, "ACCESS");
+            u8g2.drawStr(31, 45, "GRANTED");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::ACCESS_DENIED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(34, 29, "ACCESS");
+            u8g2.drawStr(34, 46, "DENIED");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::MOTION_DETECTED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(35, 30, "MOTION");
+            u8g2.drawStr(28, 45, "DETECTED");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::FINGERPRINT_MATCHED:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(14, 29, "FINGERPRINT");
+            u8g2.drawStr(32, 45, "MATCHED");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::FINGERPRINT_NO_MATCH:
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(14, 29, "FINGERPRINT");
+            u8g2.drawStr(27, 45, "NO MATCH");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::PASSWORD_CORRECT:
+            u8g2.setDrawColor(2);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(31, 34, "CORRECT");
+            u8g2.setDrawColor(1);
+            u8g2.drawStr(27, 19, "PASSWORD");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawXBMP(48, 41, 29, 14, image_FaceNormal_bits);
+            break;
+        case UIState::PASSWORD_INCORRECT:
+            u8g2.setDrawColor(2);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(23, 36, "INCORRECT");
+            u8g2.setDrawColor(1);
+            u8g2.drawStr(27, 20, "PASSWORD");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawXBMP(49, 42, 29, 14, image_FaceNopower_bits);
+            break;
+        case UIState::SAY_CHEESE:
+            u8g2.setDrawColor(2);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(17, 46, "CHEESE");
+            u8g2.setDrawColor(1);
+            u8g2.drawStr(18, 29, "SAY");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawXBM(88, 23, 18, 18, image_Smile_bits);
+            break;
+        case UIState::WELCOME:
+            u8g2.setDrawColor(2);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(10, 40, "RECEPTIONIST");
+            u8g2.setDrawColor(1);
+            u8g2.drawStr(42, 23, "SMART");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawEllipse(63, 49, 2, 2);
+            u8g2.drawEllipse(55, 49, 2, 2);
+            u8g2.drawEllipse(71, 49, 2, 2);
+            break;
     }
     u8g2.sendBuffer();
 }
 
-void UI::displayRecordingMessage() {
+void UI::displayPasswordAsAsterisks(char *password) {
     u8g2.clearBuffer();
+    u8g2.setFontMode(1);
+    u8g2.setBitmapMode(1);
+    u8g2.setFont(u8g2_font_t0_16b_tr);
+    u8g2.drawStr(8, 26, "ENTER PASSWORD");
     u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(2, 32, "RECORDING...");
-    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
+    u8g2.drawStr(45, 47, password);
+    u8g2.drawFrame(1, 1, 125, 61);
     u8g2.sendBuffer();
 }
-
-void UI::displayPlayingMessage() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(2, 32, "PLAYING...");
-    u8g2.drawStr(2, 47, "PRESS 1 TO STOP");
-    u8g2.sendBuffer();
-}
-
-void UI::displayAccessGranted() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "ACCESS");
-    u8g2.drawStr(50, 47, "GRANTED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayAccessDenied() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "ACCESS");
-    u8g2.drawStr(50, 47, "DENIED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayMotionDetected() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "MOTION");
-    u8g2.drawStr(50, 47, "DETECTED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayFingerprintMatched() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "FINGERPRINT");
-    u8g2.drawStr(50, 47, "MATCHED");
-    u8g2.sendBuffer();
-}
-
-void UI::displayFingerprintNoMatch() {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_profont17_tr);
-    u8g2.drawStr(40, 32, "FINGERPRINT");
-    u8g2.drawStr(50, 47, "NO MATCH");
-    u8g2.sendBuffer();
-}
-
-
 
 ######################################
 

@@ -68,16 +68,15 @@ void setup() {
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
     audio.begin(eventDispatcher);
-//    fingerprintHandler.begin(eventDispatcher);
-//    gateControl.begin(eventDispatcher);
-//    pirSensor.begin(eventDispatcher);
-//    breakBeamSensor.begin(eventDispatcher);
-//    ledControl.begin(eventDispatcher);
-//    espNow.begin(eventDispatcher);
+    fingerprintHandler.begin(eventDispatcher);
+    gateControl.begin(eventDispatcher);
+    pirSensor.begin(eventDispatcher);
+    breakBeamSensor.begin(eventDispatcher);
+    ledControl.begin(eventDispatcher);
+    espNow.begin(eventDispatcher);
 
     LOG_I("MAIN", "System initialization complete");
 }
 
 void loop() {
-    // Not needed, all tasks are handled by the FreeRTOS scheduler.
 }

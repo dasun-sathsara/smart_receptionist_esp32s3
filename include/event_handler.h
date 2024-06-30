@@ -26,12 +26,6 @@ private:
 
     void handleTelegramAudioCommand(const Event &event);
 
-    void handleRecordStop(const Event &event);
-
-    void handlePlaybackStart(const Event &event);
-
-    void handlePlaybackStop(const Event &event);
-
     void handleWebSocketConnected(const Event &event);
 
     void handleAudioDataReceived(const Event &event);
@@ -59,6 +53,10 @@ private:
     void handlePasswordValid(const Event &event);
 
     void handlePasswordInvalid(const Event &event);
+
+    void handlePersonDetected(const Event &event);
+
+    void handleVisitorEntered(const Event &event);
 };
 
 #endif // EVENT_HANDLER_H

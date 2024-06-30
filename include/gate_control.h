@@ -16,23 +16,23 @@ public:
 
     bool isGateMoving() const;
 
-    static bool isGateOpen(); // Make non-const
+    static bool getIsGateOpen();
 
 private:
     static void gateControlTask(void *parameter);
 
-    int _motorPin1;
-    int _motorPin2;
-    int _enablePin;
+    int motorPin1;
+    int motorPin2;
+    int enablePin;
 
-    unsigned long _movementStartTime = 0;
-    bool _isMoving = false;
-    static volatile bool _isGateOpen;
+    unsigned long movementStartTime = 0;
+    bool isMoving = false;
+    static volatile bool isGateOpen;
 
     static EventDispatcher *eventDispatcher;
 
-    // Use a mutex to protect _isGateOpen
-    static SemaphoreHandle_t _gateStateMutex;
+    // Use a mutex to protect isGateOpen
+    static SemaphoreHandle_t gateStateMutex;
 };
 
 #endif // GATE_CONTROL_H

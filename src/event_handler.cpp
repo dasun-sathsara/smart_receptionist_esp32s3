@@ -31,6 +31,9 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleAccessDenied(e); });
 
     dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
+    dispatcher.registerCallback(PERSON_DETECTED, [this](const Event &e) { handlePersonDetected(e); });
+
+    dispatcher.registerCallback(VISITOR_ENTERED, [this](const Event &e) { handleVisitorEntered(e); });
 }
 
 
@@ -162,4 +165,15 @@ void EventHandler::handleMotionDetected(const Event &event) {
     espNow.sendCommand("capture_image");
     network.sendEvent("motion_detected", JsonObject());
     LOG_I(TAG, "Motion detected and visitor identification initiated!");
+}
+
+void EventHandler::handlePersonDetected(const Event &event) {
+    network.sendEvent("person_detected", JsonObject());
+    LOG_I(TAG, "Person detected!");
+}
+
+void EventHandler::handleVisitorEntered(const Event &event) {
+    LOG_I(TAG, "Visitor entered!");
+    vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for 5 seconds before closing the gate
+    gate.closeGate();
 }

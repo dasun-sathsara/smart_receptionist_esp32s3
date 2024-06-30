@@ -15,7 +15,7 @@ public:
     void turnOff();
 
 private:
-    int _pin;
+    int pin;
     static EventDispatcher *eventDispatcher;
 };
 

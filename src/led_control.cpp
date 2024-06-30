@@ -5,23 +5,23 @@ static const char *TAG = "LED_CONTROL";
 
 EventDispatcher *LEDControl::eventDispatcher = nullptr;
 
-LEDControl::LEDControl(int pin) : _pin(pin) {}
+LEDControl::LEDControl(int pin) : pin(pin) {}
 
 void LEDControl::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pinMode(_pin, OUTPUT);
-    digitalWrite(_pin, LOW);
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
     LOG_I(TAG, "LED control initialized");
 }
 
 void LEDControl::turnOn() {
-//    digitalWrite(_pin, HIGH);
+//    digitalWrite(pin, HIGH);
     LOG_I(TAG, "LED turned on");
     eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
 }
 
 void LEDControl::turnOff() {
-    digitalWrite(_pin, LOW);
+    digitalWrite(pin, LOW);
     LOG_I(TAG, "LED turned off");
     eventDispatcher->dispatchEvent({LED_TURNED_OFF, ""});
 }

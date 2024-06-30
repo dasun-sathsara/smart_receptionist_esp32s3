@@ -3,6 +3,7 @@
 #include "network_manager.h"
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include "logger.h"
 
 static const char *TAG = "AUDIO";
 
@@ -11,16 +12,13 @@ RingbufHandle_t Audio::recordBuffer = nullptr;
 RingbufHandle_t Audio::playBuffer = nullptr;
 TaskHandle_t Audio::i2sReaderTaskHandle = nullptr;
 TaskHandle_t Audio::i2sWriterTaskHandle = nullptr;
-TaskHandle_t Audio::audioProcessingTaskHandle = nullptr;
+TaskHandle_t Audio::audioTransmissionTaskHandle = nullptr;
 volatile bool Audio::isRecording = false;
 volatile bool Audio::isPlaying = false;
-StaticRingbuffer_t Audio::recordBufferStatic;
-StaticRingbuffer_t Audio::playBufferStatic;
 
-// Audio batching configuration
-const size_t Audio::BATCH_SIZE = 4096; // Adjust this value based on your needs
-const TickType_t Audio::BATCH_TIMEOUT = pdMS_TO_TICKS(100); // 100ms timeout
-
+// Audio transmission configuration
+const size_t Audio::TRANSMISSION_BUFFER_SIZE = 16384;
+const TickType_t Audio::TRANSMISSION_TIMEOUT = pdMS_TO_TICKS(400); // 100ms timeout
 
 const i2s_config_t Audio::i2sConfigRx = {
         .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_RX),
@@ -67,62 +65,59 @@ const i2s_pin_config_t Audio::i2sPinConfigTx = {
 void Audio::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
 
-    recordBuffer = xRingbufferCreateStatic(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF,
-                                           (uint8_t *) ps_malloc(RING_BUF_SIZE),
-                                           &recordBufferStatic);
-
-    playBuffer = xRingbufferCreateStatic(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF,
-                                         (uint8_t *) ps_malloc(RING_BUF_SIZE),
-                                         &playBufferStatic);
+    // Create ring buffers
+    recordBuffer = xRingbufferCreate(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
+    playBuffer = xRingbufferCreate(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
 
     if (recordBuffer == nullptr || playBuffer == nullptr) {
-        ESP_LOGE(TAG, "Failed to create ring buffers");
+        LOG_E(TAG, "Failed to create ring buffers");
         return;
     }
 
+    // Install and configure I2S drivers
     ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2sConfigRx, 0, nullptr));
     ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, &i2sPinConfigRx));
-
     ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_1, &i2sConfigTx, 0, nullptr));
     ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_1, &i2sPinConfigTx));
 
-    xTaskCreatePinnedToCore(i2sReaderTask, "I2S Reader Task", 8192, nullptr, 5, &i2sReaderTaskHandle, 0);
-    xTaskCreatePinnedToCore(i2sWriterTask, "I2S Writer Task", 8192, nullptr, 5, &i2sWriterTaskHandle, 1);
-    xTaskCreatePinnedToCore(audioProcessingTask, "Audio Processing Task", 8192, nullptr, 4, &audioProcessingTaskHandle, 1);
+    // Create tasks
+    xTaskCreatePinnedToCore(i2sReaderTask, "I2S Reader Task", 4096, nullptr, 5, &i2sReaderTaskHandle, 0);
+    xTaskCreatePinnedToCore(i2sWriterTask, "I2S Writer Task", 4096, nullptr, 5, &i2sWriterTaskHandle, 1);
+    xTaskCreatePinnedToCore(audioTransmissionTask, "Audio Transmission Task", 4096, nullptr, 4, &audioTransmissionTaskHandle, 1);
 
     // Initially suspend all tasks
     vTaskSuspend(i2sReaderTaskHandle);
     vTaskSuspend(i2sWriterTaskHandle);
-    vTaskSuspend(audioProcessingTaskHandle);
+    vTaskSuspend(audioTransmissionTaskHandle);
 
-    ESP_LOGI(TAG, "Audio system initialized");
+    LOG_I(TAG, "Audio system initialized");
 }
 
 void Audio::startRecording() {
     isRecording = true;
     vTaskResume(i2sReaderTaskHandle);
-    vTaskResume(audioProcessingTaskHandle);
-    ESP_LOGI(TAG, "Recording started");
+    vTaskResume(audioTransmissionTaskHandle);
+    LOG_I(TAG, "Recording started");
 }
 
 void Audio::stopRecording() {
     isRecording = false;
     vTaskSuspend(i2sReaderTaskHandle);
-    vTaskSuspend(audioProcessingTaskHandle);
-    ESP_LOGI(TAG, "Recording stopped");
+    vTaskSuspend(audioTransmissionTaskHandle);
+    LOG_I(TAG, "Recording stopped");
 }
 
 void Audio::startPlayback() {
     isPlaying = true;
     vTaskResume(i2sWriterTaskHandle);
-    ESP_LOGI(TAG, "Playback started");
+    vTaskDelay(pdMS_TO_TICKS(1000)); // Buffer for one second before starting playback
+    LOG_I(TAG, "Playback started");
 }
 
 void Audio::stopPlayback() {
     isPlaying = false;
+    LOG_I(TAG, "Stopping playback...");
     vTaskSuspend(i2sWriterTaskHandle);
-
-    // Clear the I2S DMA buffer
     i2s_zero_dma_buffer(I2S_NUM_1);
 
     // Clear the play buffer
@@ -132,7 +127,7 @@ void Audio::stopPlayback() {
         vRingbufferReturnItem(playBuffer, item);
     }
 
-    ESP_LOGI(TAG, "Playback stopped and buffers cleared");
+    LOG_I(TAG, "Playback stopped and buffers cleared");
 }
 
 void Audio::addDataToBuffer(const uint8_t *data, size_t length) {
@@ -144,10 +139,10 @@ void Audio::addDataToBuffer(const uint8_t *data, size_t length) {
 void Audio::i2sReaderTask(void *parameter) {
     size_t bytesRead = 0;
     const size_t bufferSize = DMA_BUF_LEN * 2;
-    uint8_t *buffer = (uint8_t *) heap_caps_malloc(bufferSize, MALLOC_CAP_DMA);
+    auto *buffer = (uint8_t *) heap_caps_malloc(bufferSize, MALLOC_CAP_DMA);
 
     if (!buffer) {
-        ESP_LOGE(TAG, "Failed to allocate memory for audio buffer");
+        LOG_E(TAG, "Failed to allocate memory for audio buffer");
         vTaskDelete(nullptr);
         return;
     }
@@ -184,47 +179,44 @@ void Audio::i2sWriterTask(void *parameter) {
     }
 }
 
-void Audio::audioProcessingTask(void *parameter) {
+void Audio::audioTransmissionTask(void *parameter) {
     size_t itemSize = 0;
     uint8_t *item = nullptr;
-    auto *batchBuffer = (uint8_t *) heap_caps_malloc(BATCH_SIZE + 6, MALLOC_CAP_DMA);
-    size_t batchedSize = 0;
+    auto *transmissionBuffer = (uint8_t *) heap_caps_malloc(TRANSMISSION_BUFFER_SIZE + 6, MALLOC_CAP_DMA);
+    size_t bufferedSize = 0;
     TickType_t lastSendTime = xTaskGetTickCount();
 
-    if (!batchBuffer) {
-        ESP_LOGE(TAG, "Failed to allocate memory for batch buffer");
+    if (!transmissionBuffer) {
+        LOG_E(TAG, "Failed to allocate memory for transmission buffer");
         vTaskDelete(nullptr);
         return;
     }
 
-    memcpy(batchBuffer, "AUDIO:", 6);
+    memcpy(transmissionBuffer, "AUDIO:", 6);
 
     while (true) {
         if (isRecording) {
             item = (uint8_t *) xRingbufferReceive(recordBuffer, &itemSize, pdMS_TO_TICKS(10));
             if (item != nullptr) {
-                size_t remainingSpace = BATCH_SIZE - batchedSize;
+                size_t remainingSpace = TRANSMISSION_BUFFER_SIZE - bufferedSize;
                 size_t copySize = (itemSize < remainingSpace) ? itemSize : remainingSpace;
-
-                memcpy(batchBuffer + 6 + batchedSize, item, copySize);
-                batchedSize += copySize;
-
+                memcpy(transmissionBuffer + 6 + bufferedSize, item, copySize);
+                bufferedSize += copySize;
                 vRingbufferReturnItem(recordBuffer, item);
 
-                if (batchedSize >= BATCH_SIZE || (xTaskGetTickCount() - lastSendTime) >= BATCH_TIMEOUT) {
-                    NetworkManager::sendAudioChunk(batchBuffer, batchedSize + 6);
-                    batchedSize = 0;
+                if (bufferedSize >= TRANSMISSION_BUFFER_SIZE || (xTaskGetTickCount() - lastSendTime) >= TRANSMISSION_TIMEOUT) {
+                    NetworkManager::sendAudioChunk(transmissionBuffer, bufferedSize + 6);
+                    bufferedSize = 0;
                     lastSendTime = xTaskGetTickCount();
                 }
             }
         } else {
-            // If not recording, reset the batched size and last send time
-            batchedSize = 0;
+            // If not recording, reset the buffered size and last send time
+            bufferedSize = 0;
             lastSendTime = xTaskGetTickCount();
         }
-//        vTaskDelay(pdMS_TO_TICKS(10));
-        vTaskDelay(pdMS_TO_TICKS(100)); // Change it back to 10 if it doesn't work
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    heap_caps_free(batchBuffer);
+    heap_caps_free(transmissionBuffer);
 }

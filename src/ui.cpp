@@ -38,6 +38,8 @@ void UI::begin(EventDispatcher &dispatcher) {
     u8g2.setBusClock(400000);
     u8g2.setI2CAddress(I2C_ADDRESS * 2);
     u8g2.begin();
+
+
     xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
     LOG_I(TAG, "UI initialized");
 }
@@ -57,9 +59,19 @@ void UI::update() {
         handleKeyPress(key);
     }
 
-    // If the current state has been active for more than the timeout, go back to the welcome screen
-    // Unless we are recording or playing audio
-    if (millis() - lastStateChangeTime > STATE_TIMEOUT && currentState != UIState::WELCOME && currentState != UIState::RECORDING_AUDIO &&
+    unsigned long currentTime = millis();
+
+    // Check for temporary state expiration
+    if (temporaryState && currentTime >= stateEndTime) {
+        setState(originalState);
+        temporaryState = false;
+        LOG_I(TAG, "UI state changed back to %d", static_cast<int>(originalState));
+    }
+
+    // Check for timeout to return to welcome screen
+    if (currentTime - lastStateChangeTime > STATE_TIMEOUT &&
+        currentState != UIState::WELCOME &&
+        currentState != UIState::RECORDING_AUDIO &&
         currentState != UIState::PLAYING_AUDIO) {
         setState(UIState::WELCOME);
     }
@@ -76,14 +88,11 @@ void UI::setState(UIState newState) {
 }
 
 void UI::setStateFor(int seconds, UIState newState) {
-    lastStateChangeTime = millis();
-    UIState old_state = currentState;
-    currentState = newState;
-    LOG_I(TAG, "UI state changed to: %d", static_cast<int>(old_state));
-    vTaskDelay(pdMS_TO_TICKS(seconds * 1000));
-    currentState = old_state;
-    LOG_I(TAG, "UI state changed back to: %d", static_cast<int>(old_state));
-
+    setState(newState);
+    stateEndTime = millis() + (seconds * 1000);
+    temporaryState = true;
+    originalState = currentState;
+    LOG_I(TAG, "UI state changed to %d for %d seconds", static_cast<int>(newState), seconds);
 }
 
 void UI::handleKeyPress(char key) {
@@ -147,6 +156,7 @@ void UI::handleMenuKeyPress(char key) {
             switch (currentState) {
                 case UIState::MENU_NOTIFY_OWNER:
                     setState(UIState::OWNER_NOTIFIED);
+                    eventDispatcher->dispatchEvent({PERSON_DETECTED, ""});
                     break;
                 case UIState::MENU_ENTER_PASSWORD:
                     setState(UIState::ENTER_PASSWORD);
@@ -171,28 +181,19 @@ void UI::handlePasswordKeyPress(char key) {
     if (key >= '0' && key <= '6' && passwordIndex < 4) {
         enteredPassword[passwordIndex++] = key;
         enteredPassword[passwordIndex] = '\0';
-
-        // Display the entered password as asterisks
-        char passwordDisplay[5];
-        for (int i = 0; i < passwordIndex; i++) {
-            passwordDisplay[i] = '*';
-        }
-        passwordDisplay[passwordIndex] = '\0';
-        displayPasswordAsAsterisks(passwordDisplay);
+        displayPasswordAsAsterisks(enteredPassword);
     } else if (key == '7') {
-        passwordIndex = 0;
-        enteredPassword[0] = '\0';
-
-        char passwordDisplay[5];
-        passwordDisplay[0] = '\0';
-        displayPasswordAsAsterisks(passwordDisplay);
+        if (passwordIndex > 0) {
+            enteredPassword[--passwordIndex] = '\0';
+            displayPasswordAsAsterisks(enteredPassword);
+        }
     } else if (key == '9') {
         enteringPassword = false;
         bool passwordCorrect = (strcmp(enteredPassword, correctPassword) == 0);
         eventDispatcher->dispatchEvent({passwordCorrect ? PASSWORD_VALID : PASSWORD_INVALID, ""});
         setState(passwordCorrect ? UIState::PASSWORD_CORRECT : UIState::PASSWORD_INCORRECT);
         passwordIndex = 0;
-        enteredPassword[0] = '\0';
+        memset(enteredPassword, 0, sizeof(enteredPassword));
     }
 }
 
