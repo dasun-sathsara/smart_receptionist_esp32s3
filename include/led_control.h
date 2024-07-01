@@ -6,7 +6,7 @@
 
 class LEDControl {
 public:
-    explicit LEDControl(int pin);
+    LEDControl();
 
     void begin(EventDispatcher &dispatcher);
 

@@ -6,7 +6,10 @@
 
 static const char *TAG = "UI";
 
-// Keypad configuration
+const int UI::menuItemCount = 4;
+const char UI::correctPassword[] = "1234";
+EventDispatcher *UI::eventDispatcher = nullptr;
+
 const byte ROWS = 4;
 const byte COLS = 3;
 char hexaKeys[ROWS][COLS] = {
@@ -15,12 +18,9 @@ char hexaKeys[ROWS][COLS] = {
         {'7', '8', '9'},
         {'*', '0', '#'}
 };
-byte rowPins[ROWS] = {4, 5, 6, 7};
-byte colPins[COLS] = {15, 16, 17};
 
-const int UI::menuItemCount = 4;
-const char UI::correctPassword[] = "1234";
-EventDispatcher *UI::eventDispatcher = nullptr;
+byte rowPins[ROWS] = {ROW1, ROW2, ROW3, ROW4};
+byte colPins[COLS] = {COL1, COL2, COL3};
 
 UI::UI() : u8g2(U8G2_R0, U8X8_PIN_NONE),
            keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS),

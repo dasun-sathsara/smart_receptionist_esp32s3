@@ -1,5 +1,6 @@
 #include "gate_control.h"
 #include "logger.h"
+#include "config.h"
 
 static const char *TAG = "GATE_CONTROL";
 
@@ -7,11 +8,15 @@ EventDispatcher *GateControl::eventDispatcher = nullptr;
 volatile bool GateControl::isGateOpen = false;
 SemaphoreHandle_t GateControl::gateStateMutex = xSemaphoreCreateMutex();
 
-GateControl::GateControl(int motorPin1, int motorPin2, int enablePin)
-        : motorPin1(motorPin1), motorPin2(motorPin2), enablePin(enablePin) {}
+GateControl::GateControl() {
+    motorPin1 = MOTOR_PIN1;
+    motorPin2 = MOTOR_PIN2;
+    enablePin = MOTOR_ENABLE;
+};
 
 void GateControl::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+
     pinMode(motorPin1, OUTPUT);
     pinMode(motorPin2, OUTPUT);
     pinMode(enablePin, OUTPUT);

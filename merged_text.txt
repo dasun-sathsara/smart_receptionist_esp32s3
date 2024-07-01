@@ -89,7 +89,6 @@ private:
 // Audio settings
 #define SAMPLE_RATE 48000
 #define BITS_PER_SAMPLE 16
-#define CHANNELS 1
 
 // DMA buffer settings
 #define DMA_BUF_COUNT 8
@@ -100,12 +99,22 @@ private:
 
 // Fingerprint sensor configuration
 #define FINGERPRINT_TX 1
-#define FINGERPRINT_RX 2    
+#define FINGERPRINT_RX 2
 
 // OLED I2C address
 #define SDA_PIN 18
 #define SCL_PIN 8
 #define I2C_ADDRESS 0x3C
+
+// Keypad configuration
+
+#define ROW1 4
+#define ROW2 5
+#define ROW3 6
+#define ROW4 7
+#define COL1 15
+#define COL2 16
+#define COL3 17
 
 #endif // CONFIG_H
 
@@ -287,14 +296,13 @@ private:
 
 class FingerprintHandler {
 public:
-    explicit FingerprintHandler(const HardwareSerial &serial);
+    FingerprintHandler();
 
     void begin(EventDispatcher &dispatcher);
 
 private:
     static void fingerprintTask(void *parameter);
 
-    HardwareSerial mySerial;
     Adafruit_Fingerprint fingerprint;
     EventDispatcher *eventDispatcher{};
 };
@@ -313,7 +321,7 @@ private:
 
 class GateControl {
 public:
-    GateControl(int motorPin1, int motorPin2, int enablePin);
+    GateControl();
 
     void begin(EventDispatcher &dispatcher);
 
@@ -328,9 +336,9 @@ public:
 private:
     static void gateControlTask(void *parameter);
 
-    int motorPin1;
-    int motorPin2;
-    int enablePin;
+    int motorPin1{};
+    int motorPin2{};
+    int enablePin{};
 
     unsigned long movementStartTime = 0;
     bool isMoving = false;
@@ -420,7 +428,7 @@ static const unsigned char image_FaceNormal_bits[]
 
 class LEDControl {
 public:
-    explicit LEDControl(int pin);
+    LEDControl();
 
     void begin(EventDispatcher &dispatcher);
 
@@ -453,9 +461,9 @@ enum LogLevel {
     LOG_DEBUG
 };
 
-extern LogLevel currentLogLevel; // Declare as extern
+extern LogLevel currentLogLevel;
 
-extern void logger(LogLevel level, const char *tag, const char *format, ...); // Declare as extern
+extern void logger(LogLevel level, const char *tag, const char *format, ...);
 
 // Macros for convenience (similar to esp_log)
 #define LOG_E(tag, format, ...) logger(LOG_ERROR, tag, format, ##__VA_ARGS__)
@@ -511,25 +519,29 @@ private:
 
 class PIRSensor {
 public:
-    explicit PIRSensor(int pin);
+    PIRSensor();
+
     void begin(EventDispatcher &dispatcher);
 
 private:
     static void pirTask(void *parameter);
+
     int pin;
-    unsigned long lastDebounceTime;
     int lastState;
     int state;
     static EventDispatcher *eventDispatcher;
+    unsigned long lastDebounceTime;
 };
 
 class BreakBeamSensor {
 public:
-    explicit BreakBeamSensor(int pin);
+    BreakBeamSensor();
+
     void begin(EventDispatcher &dispatcher);
 
 private:
     static void breakBeamTask(void *parameter);
+
     int pin;
     unsigned long lastDebounceTime;
     int lastState;
@@ -607,14 +619,9 @@ private:
     static const unsigned long STATE_TIMEOUT = 30000; // 30 seconds timeout
     void displayPasswordAsAsterisks(char *password);
 
-    static void stateChangeTimerCallback(TimerHandle_t xTimer);
-
-    TimerHandle_t stateChangeTimer{};
-
-    struct StateChangeParams {
-        UIState originalState;
-        UIState temporaryState;
-    };
+    unsigned long stateEndTime{};
+    bool temporaryState{};
+    UIState originalState{};
 };
 
 #endif // UI_H
@@ -1141,8 +1148,10 @@ void EventHandler::handleVisitorEntered(const Event &event) {
 
 static const char *TAG = "FINGERPRINT";
 
-FingerprintHandler::FingerprintHandler(const HardwareSerial &serial) : mySerial(serial), fingerprint(&mySerial) {
+FingerprintHandler::FingerprintHandler() {
+    HardwareSerial mySerial(1);
     mySerial.begin(57600, SERIAL_8N1, FINGERPRINT_RX, FINGERPRINT_TX);
+    fingerprint = Adafruit_Fingerprint(&mySerial);
     fingerprint.begin(57600);
 }
 
@@ -1205,6 +1214,7 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 
 #include "gate_control.h"
 #include "logger.h"
+#include "config.h"
 
 static const char *TAG = "GATE_CONTROL";
 
@@ -1212,11 +1222,14 @@ EventDispatcher *GateControl::eventDispatcher = nullptr;
 volatile bool GateControl::isGateOpen = false;
 SemaphoreHandle_t GateControl::gateStateMutex = xSemaphoreCreateMutex();
 
-GateControl::GateControl(int motorPin1, int motorPin2, int enablePin)
-        : motorPin1(motorPin1), motorPin2(motorPin2), enablePin(enablePin) {}
+GateControl::GateControl() = default;
 
 void GateControl::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+    motorPin1 = MOTOR_PIN1;
+    motorPin2 = MOTOR_PIN2;
+    enablePin = MOTOR_ENABLE;
+
     pinMode(motorPin1, OUTPUT);
     pinMode(motorPin2, OUTPUT);
     pinMode(enablePin, OUTPUT);
@@ -1299,22 +1312,25 @@ bool GateControl::getIsGateOpen() {
 
 #include "led_control.h"
 #include "logger.h"
+#include "config.h"
 
 static const char *TAG = "LED_CONTROL";
 
 EventDispatcher *LEDControl::eventDispatcher = nullptr;
 
-LEDControl::LEDControl(int pin) : pin(pin) {}
+LEDControl::LEDControl() = default;
 
 void LEDControl::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+    pin = LED_STRIP_PIN;
+
     pinMode(pin, OUTPUT);
     digitalWrite(pin, LOW);
     LOG_I(TAG, "LED control initialized");
 }
 
 void LEDControl::turnOn() {
-//    digitalWrite(pin, HIGH);
+    digitalWrite(pin, HIGH);
     LOG_I(TAG, "LED turned on");
     eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
 }
@@ -1327,21 +1343,9 @@ void LEDControl::turnOff() {
 
 ###############################################
 
-############# src\main.cpp #############
+############# src\logger.cpp #############
 
-#include <Arduino.h>
-#include "events.h"
-#include "audio.h"
-#include "network_manager.h"
-#include "ui.h"
-#include "fingerprint.h"
 #include "logger.h"
-#include "esp_now_manager.h"
-#include "gate_control.h"
-#include "sensors.h"
-#include "led_control.h"
-#include "config.h"
-#include "event_handler.h"
 
 #define LOG_BUFFER_SIZE 128
 
@@ -1363,38 +1367,46 @@ void logger(LogLevel level, const char *tag, const char *format, ...) {
                   level == LOG_ERROR ? "ERROR" : (
                           level == LOG_WARN ? "WARN" : (
                                   level == LOG_INFO ? "INFO" : (
-                                          level == LOG_DEBUG ? "DEBUG" : "???"))),
-                  tag, message);
+                                          level == LOG_DEBUG ? "DEBUG" : "???"))), tag, message);
 }
+
+##########################################
+
+############# src\main.cpp #############
+
+#include <Arduino.h>
+#include "events.h"
+#include "audio.h"
+#include "network_manager.h"
+#include "ui.h"
+#include "fingerprint.h"
+#include "logger.h"
+#include "esp_now_manager.h"
+#include "gate_control.h"
+#include "sensors.h"
+#include "led_control.h"
+#include "config.h"
+#include "event_handler.h"
+
 
 static const char *TAG = "MAIN";
-
-void checkPSRAM() {
-    if (psramFound()) {
-        LOG_I(TAG, "PSRAM is available");
-    } else {
-        LOG_E(TAG, "PSRAM is not available or not initialized");
-    }
-}
 
 EventDispatcher eventDispatcher;
 NetworkManager wifiHandler;
 UI ui;
 HardwareSerial fingerprintSerial(1);
 FingerprintHandler fingerprintHandler(fingerprintSerial);
-GateControl gateControl(MOTOR_PIN1, MOTOR_PIN2, MOTOR_ENABLE);
-PIRSensor pirSensor(PIR_PIN);
-BreakBeamSensor breakBeamSensor(BREAK_BEAM_PIN);
-LEDControl ledControl(LED_STRIP_PIN);
+GateControl gateControl;
+PIRSensor pirSensor;
+BreakBeamSensor breakBeamSensor;
+LEDControl ledControl;
 Audio audio;
 ESPNow espNow;
-
 EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl, ui, espNow);
 
 void setup() {
     eventHandler.registerCallbacks(eventDispatcher);
     Serial.begin(115200);
-    checkPSRAM();
 
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
@@ -1406,11 +1418,10 @@ void setup() {
     ledControl.begin(eventDispatcher);
     espNow.begin(eventDispatcher);
 
-    LOG_I("MAIN", "System initialization complete");
+    LOG_I(TAG, "System initialization complete");
 }
 
 void loop() {
-    // Not needed, all tasks are handled by the FreeRTOS scheduler.
 }
 
 
@@ -1549,6 +1560,7 @@ void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
 
 #include "sensors.h"
 #include "logger.h"
+#include "config.h"
 
 static const char *TAG_PIR = "PIR_SENSOR";
 static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
@@ -1556,10 +1568,11 @@ static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
 // PIR Sensor Implementation
 EventDispatcher *PIRSensor::eventDispatcher = nullptr;
 
-PIRSensor::PIRSensor(int pin) : pin(pin), lastDebounceTime(0), lastState(LOW), state(LOW) {}
+PIRSensor::PIRSensor() : lastDebounceTime(0), lastState(LOW), state(LOW) { pin = PIR_PIN; }
 
 void PIRSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+
     pinMode(pin, INPUT);
     xTaskCreate(pirTask, "PIR Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_PIR, "PIR sensor initialized");
@@ -1598,16 +1611,17 @@ void PIRSensor::pirTask(void *parameter) {
 // Break Beam Sensor Implementation
 EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
 
-BreakBeamSensor::BreakBeamSensor(int pin) : pin(pin), lastDebounceTime(0), lastState(HIGH), state(HIGH) {}
+BreakBeamSensor::BreakBeamSensor() : lastDebounceTime(0), lastState(HIGH), state(HIGH) { pin = BREAK_BEAM_PIN; }
 
 void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+
     pinMode(pin, INPUT_PULLUP);
     xTaskCreate(breakBeamTask, "Break Beam Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_BREAK_BEAM, "Break beam sensor initialized");
 }
 
-    void BreakBeamSensor::breakBeamTask(void *parameter) {
+void BreakBeamSensor::breakBeamTask(void *parameter) {
     auto *breakBeamSensor = static_cast<BreakBeamSensor *>(parameter);
     const unsigned long debounceDelay = 50;
 
@@ -1646,7 +1660,10 @@ void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
 
 static const char *TAG = "UI";
 
-// Keypad configuration
+const int UI::menuItemCount = 4;
+const char UI::correctPassword[] = "1234";
+EventDispatcher *UI::eventDispatcher = nullptr;
+
 const byte ROWS = 4;
 const byte COLS = 3;
 char hexaKeys[ROWS][COLS] = {
@@ -1655,12 +1672,9 @@ char hexaKeys[ROWS][COLS] = {
         {'7', '8', '9'},
         {'*', '0', '#'}
 };
-byte rowPins[ROWS] = {4, 5, 6, 7};
-byte colPins[COLS] = {15, 16, 17};
 
-const int UI::menuItemCount = 4;
-const char UI::correctPassword[] = "1234";
-EventDispatcher *UI::eventDispatcher = nullptr;
+byte rowPins[ROWS] = {ROW1, ROW2, ROW3, ROW4};
+byte colPins[COLS] = {COL1, COL2, COL3};
 
 UI::UI() : u8g2(U8G2_R0, U8X8_PIN_NONE),
            keypad(makeKeymap(hexaKeys), rowPins, colPins, ROWS, COLS),
@@ -1679,14 +1693,6 @@ void UI::begin(EventDispatcher &dispatcher) {
     u8g2.setI2CAddress(I2C_ADDRESS * 2);
     u8g2.begin();
 
-    // Create the timer but don't start it yet
-    stateChangeTimer = xTimerCreate(
-            "StateChangeTimer",
-            pdMS_TO_TICKS(1000), // Will be updated when timer is used
-            pdFALSE, // One-shot timer
-            this,
-            stateChangeTimerCallback
-    );
 
     xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
     LOG_I(TAG, "UI initialized");
@@ -1707,9 +1713,19 @@ void UI::update() {
         handleKeyPress(key);
     }
 
-    // If the current state has been active for more than the timeout, go back to the welcome screen
-    // Unless we are recording or playing audio
-    if (millis() - lastStateChangeTime > STATE_TIMEOUT && currentState != UIState::WELCOME && currentState != UIState::RECORDING_AUDIO &&
+    unsigned long currentTime = millis();
+
+    // Check for temporary state expiration
+    if (temporaryState && currentTime >= stateEndTime) {
+        setState(originalState);
+        temporaryState = false;
+        LOG_I(TAG, "UI state changed back to %d", static_cast<int>(originalState));
+    }
+
+    // Check for timeout to return to welcome screen
+    if (currentTime - lastStateChangeTime > STATE_TIMEOUT &&
+        currentState != UIState::WELCOME &&
+        currentState != UIState::RECORDING_AUDIO &&
         currentState != UIState::PLAYING_AUDIO) {
         setState(UIState::WELCOME);
     }
@@ -1726,39 +1742,11 @@ void UI::setState(UIState newState) {
 }
 
 void UI::setStateFor(int seconds, UIState newState) {
-    if (stateChangeTimer == nullptr) {
-        LOG_E(TAG, "State change timer not initialized");
-        return;
-    }
-
-    // Stop the timer if it's already running
-    xTimerStop(stateChangeTimer, 0);
-
-    // Save the current state
-    auto *params = new StateChangeParams{currentState, newState};
-
-    // Set the new temporary state
     setState(newState);
-
-    // Configure and start the timer
-    xTimerChangePeriod(stateChangeTimer, pdMS_TO_TICKS(seconds * 1000), 0);
-    xTimerStart(stateChangeTimer, 0);
-
-    // Pass the params to the timer
-    vTimerSetTimerID(stateChangeTimer, params);
-
+    stateEndTime = millis() + (seconds * 1000);
+    temporaryState = true;
+    originalState = currentState;
     LOG_I(TAG, "UI state changed to %d for %d seconds", static_cast<int>(newState), seconds);
-}
-
-void UI::stateChangeTimerCallback(TimerHandle_t xTimer) {
-    UI *ui = static_cast<UI *>(pvTimerGetTimerID(xTimer));
-    auto *params = static_cast<StateChangeParams *>(pvTimerGetTimerID(xTimer));
-
-    if (ui && params) {
-        ui->setState(params->originalState);
-        LOG_I(TAG, "UI state changed back to %d", static_cast<int>(params->originalState));
-        delete params;
-    }
 }
 
 void UI::handleKeyPress(char key) {

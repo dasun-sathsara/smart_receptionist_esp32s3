@@ -9,7 +9,7 @@
 
 class ESPNow {
 public:
-    void begin(EventDispatcher &dispatcher);
+    static void begin(EventDispatcher &dispatcher);
 
     static void sendCommand(const char *command);
 

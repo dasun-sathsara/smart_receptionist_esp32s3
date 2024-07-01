@@ -1,16 +1,17 @@
 #include "sensors.h"
 #include "logger.h"
+#include "config.h"
 
 static const char *TAG_PIR = "PIR_SENSOR";
 static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
 
-// PIR Sensor Implementation
 EventDispatcher *PIRSensor::eventDispatcher = nullptr;
 
-PIRSensor::PIRSensor(int pin) : pin(pin), lastDebounceTime(0), lastState(LOW), state(LOW) {}
+PIRSensor::PIRSensor() : lastDebounceTime(0), lastState(LOW), state(LOW) { pin = PIR_PIN; }
 
 void PIRSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+
     pinMode(pin, INPUT);
     xTaskCreate(pirTask, "PIR Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_PIR, "PIR sensor initialized");
@@ -46,19 +47,19 @@ void PIRSensor::pirTask(void *parameter) {
     }
 }
 
-// Break Beam Sensor Implementation
 EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
 
-BreakBeamSensor::BreakBeamSensor(int pin) : pin(pin), lastDebounceTime(0), lastState(HIGH), state(HIGH) {}
+BreakBeamSensor::BreakBeamSensor() : lastDebounceTime(0), lastState(HIGH), state(HIGH) { pin = BREAK_BEAM_PIN; }
 
 void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
+
     pinMode(pin, INPUT_PULLUP);
     xTaskCreate(breakBeamTask, "Break Beam Sensor Task", 2048, this, 1, nullptr);
     LOG_I(TAG_BREAK_BEAM, "Break beam sensor initialized");
 }
 
-    void BreakBeamSensor::breakBeamTask(void *parameter) {
+void BreakBeamSensor::breakBeamTask(void *parameter) {
     auto *breakBeamSensor = static_cast<BreakBeamSensor *>(parameter);
     const unsigned long debounceDelay = 50;
 

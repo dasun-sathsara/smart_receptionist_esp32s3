@@ -30,17 +30,14 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
     webSocket.begin(WS_SERVER, WS_PORT);
     webSocket.onEvent(webSocketEvent);
 
-    xTaskCreate([](void *param) {
-        while (true) {
-            NetworkManager::loop();
-            vTaskDelay(10);
-        }
-    }, "WiFi Task", 8192, this, 2, nullptr);
+    xTaskCreate(NetworkManager::loop, "WiFi Task", 8192, this, 2, nullptr);
 }
 
-void NetworkManager::loop() {
-    webSocket.loop();
-    vTaskDelay(pdMS_TO_TICKS(5));
+[[noreturn]] void NetworkManager::loop(void *pvParameters) {
+    while (true) {
+        webSocket.loop();
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 }
 
 void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {

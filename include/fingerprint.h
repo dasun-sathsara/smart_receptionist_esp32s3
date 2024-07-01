@@ -15,7 +15,7 @@ private:
 
     HardwareSerial mySerial;
     Adafruit_Fingerprint fingerprint;
-    EventDispatcher *eventDispatcher{};
+    static EventDispatcher *eventDispatcher;
 };
 
 #endif // FINGERPRINT_H

@@ -39,7 +39,6 @@
 // Audio settings
 #define SAMPLE_RATE 48000
 #define BITS_PER_SAMPLE 16
-#define CHANNELS 1
 
 // DMA buffer settings
 #define DMA_BUF_COUNT 8
@@ -50,11 +49,21 @@
 
 // Fingerprint sensor configuration
 #define FINGERPRINT_TX 1
-#define FINGERPRINT_RX 2    
+#define FINGERPRINT_RX 2
 
 // OLED I2C address
 #define SDA_PIN 18
 #define SCL_PIN 8
 #define I2C_ADDRESS 0x3C
+
+// Keypad configuration
+
+#define ROW1 4
+#define ROW2 5
+#define ROW3 6
+#define ROW4 7
+#define COL1 15
+#define COL2 16
+#define COL3 17
 
 #endif // CONFIG_H

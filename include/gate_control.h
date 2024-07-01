@@ -6,7 +6,7 @@
 
 class GateControl {
 public:
-    GateControl(int motorPin1, int motorPin2, int enablePin);
+    GateControl();
 
     void begin(EventDispatcher &dispatcher);
 
@@ -21,9 +21,9 @@ public:
 private:
     static void gateControlTask(void *parameter);
 
-    int motorPin1;
-    int motorPin2;
-    int enablePin;
+    int motorPin1{};
+    int motorPin2{};
+    int enablePin{};
 
     unsigned long movementStartTime = 0;
     bool isMoving = false;

@@ -4,6 +4,8 @@
 
 static const char *TAG = "FINGERPRINT";
 
+EventDispatcher *FingerprintHandler::eventDispatcher = nullptr;
+
 FingerprintHandler::FingerprintHandler(const HardwareSerial &serial) : mySerial(serial), fingerprint(&mySerial) {
     mySerial.begin(57600, SERIAL_8N1, FINGERPRINT_RX, FINGERPRINT_TX);
     fingerprint.begin(57600);
@@ -56,7 +58,6 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
         vTaskDelay(1000);
     }
 }
-
 
 
 

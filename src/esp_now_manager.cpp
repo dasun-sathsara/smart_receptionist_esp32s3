@@ -3,9 +3,8 @@
 
 static const char *TAG = "ESPNow";
 
-EventDispatcher *ESPNow::eventDispatcher = nullptr;
 esp_now_peer_info_t ESPNow::peerInfo;
-
+EventDispatcher *ESPNow::eventDispatcher = nullptr;
 const uint8_t ESPNow::broadcastAddress[] = {0x34, 0x98, 0x7A, 0xB6, 0x8E, 0x88};
 
 void ESPNow::begin(EventDispatcher &dispatcher) {

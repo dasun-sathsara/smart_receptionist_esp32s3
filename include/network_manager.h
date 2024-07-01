@@ -9,7 +9,7 @@ class NetworkManager {
 public:
     void begin(EventDispatcher &dispatcher);
 
-    static void loop();
+    [[noreturn]] static void loop(void *pvParameters);
 
     static void sendInitMessage();
 

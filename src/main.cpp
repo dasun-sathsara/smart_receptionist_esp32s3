@@ -12,58 +12,25 @@
 #include "config.h"
 #include "event_handler.h"
 
-#define LOG_BUFFER_SIZE 128
-
-// Define currentLogLevel
-LogLevel currentLogLevel = LOG_INFO;
-
-// Define the logger function
-void logger(LogLevel level, const char *tag, const char *format, ...) {
-    if (level > currentLogLevel) return; // Skip if below current log level
-
-    char message[LOG_BUFFER_SIZE];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(message, LOG_BUFFER_SIZE, format, args);
-    va_end(args);
-
-    // Formatted output
-    Serial.printf("[%s][%s]: %s\n",
-                  level == LOG_ERROR ? "ERROR" : (
-                          level == LOG_WARN ? "WARN" : (
-                                  level == LOG_INFO ? "INFO" : (
-                                          level == LOG_DEBUG ? "DEBUG" : "???"))),
-                  tag, message);
-}
 
 static const char *TAG = "MAIN";
-
-void checkPSRAM() {
-    if (psramFound()) {
-        LOG_I(TAG, "PSRAM is available");
-    } else {
-        LOG_E(TAG, "PSRAM is not available or not initialized");
-    }
-}
 
 EventDispatcher eventDispatcher;
 NetworkManager wifiHandler;
 UI ui;
 HardwareSerial fingerprintSerial(1);
 FingerprintHandler fingerprintHandler(fingerprintSerial);
-GateControl gateControl(MOTOR_PIN1, MOTOR_PIN2, MOTOR_ENABLE);
-PIRSensor pirSensor(PIR_PIN);
-BreakBeamSensor breakBeamSensor(BREAK_BEAM_PIN);
-LEDControl ledControl(LED_STRIP_PIN);
+GateControl gateControl;
+PIRSensor pirSensor;
+BreakBeamSensor breakBeamSensor;
+LEDControl ledControl;
 Audio audio;
 ESPNow espNow;
-
 EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl, ui, espNow);
 
 void setup() {
     eventHandler.registerCallbacks(eventDispatcher);
     Serial.begin(115200);
-    checkPSRAM();
 
     wifiHandler.begin(eventDispatcher);
     ui.begin(eventDispatcher);
@@ -75,7 +42,7 @@ void setup() {
     ledControl.begin(eventDispatcher);
     espNow.begin(eventDispatcher);
 
-    LOG_I("MAIN", "System initialization complete");
+    LOG_I(TAG, "System initialization complete");
 }
 
 void loop() {

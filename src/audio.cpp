@@ -165,7 +165,7 @@ void Audio::i2sReaderTask(void *parameter) {
 void Audio::i2sWriterTask(void *parameter) {
     size_t bytesWritten = 0;
     size_t itemSize = 0;
-    uint8_t *item = nullptr;
+    uint8_t *item ;
 
     while (true) {
         if (isPlaying) {
