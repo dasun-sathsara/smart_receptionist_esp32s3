@@ -17,6 +17,8 @@ public:
 
     static void sendEvent(const char *eventType, const JsonObject &data);
 
+    [[noreturn]] static void reconnectTask(void *pvParameters);
+
 private:
     static void webSocketEvent(WStype_t type, uint8_t *payload, size_t length);
 

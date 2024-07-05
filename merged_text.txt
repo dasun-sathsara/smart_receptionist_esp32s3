@@ -10,23 +10,26 @@
 
 class Audio {
 public:
-    void begin(EventDispatcher &dispatcher);
+    static void begin(EventDispatcher &dispatcher);
+
     static void startRecording();
+
     static void stopRecording();
+
     static void startPlayback();
+
     static void stopPlayback();
-    static void addDataToBuffer(const uint8_t *data, size_t length);
+
+    static void addPrefetchData(const uint8_t *data, size_t length);
+
+    static void startPrefetch();
+
+    static void stopPrefetch();
 
 private:
-    static void i2sReaderTask(void *parameter);
-    static void i2sWriterTask(void *parameter);
-    static void audioTransmissionTask(void *parameter);
+    static void audioTask(void *parameter);
+
     static EventDispatcher *eventDispatcher;
-    static RingbufHandle_t recordBuffer;
-    static RingbufHandle_t playBuffer;
-    static TaskHandle_t i2sReaderTaskHandle;
-    static TaskHandle_t i2sWriterTaskHandle;
-    static TaskHandle_t audioTransmissionTaskHandle;
 
     // I2S configuration
     static const i2s_config_t i2sConfigRx;
@@ -36,10 +39,17 @@ private:
 
     static volatile bool isRecording;
     static volatile bool isPlaying;
+    static volatile bool isPrefetching;
 
-    // Audio transmission configuration
-    static const size_t TRANSMISSION_BUFFER_SIZE;
-    static const TickType_t TRANSMISSION_TIMEOUT;
+    static uint8_t *audioBuffer;
+    static size_t audioBufferIndex;
+    static size_t audioBufferSize;
+
+    static void clearAudioBuffer();
+
+    static void sendAudioData();
+
+    static size_t min(size_t a, size_t b);
 };
 
 #endif // AUDIO_H
@@ -67,6 +77,8 @@ private:
 #define MOTOR_PIN2 38
 #define MOTOR_ENABLE 47
 
+#define AUDIO_BUFFER_SIZE (6 * 1024 * 1024)
+
 // PIR sensor configuration
 #define PIR_PIN 42
 
@@ -87,15 +99,13 @@ private:
 #define I2S_SPEAKER_SERIAL_DATA 13
 
 // Audio settings
-#define SAMPLE_RATE 48000
+#define SAMPLE_RATE 16000
 #define BITS_PER_SAMPLE 16
 
 // DMA buffer settings
 #define DMA_BUF_COUNT 8
 #define DMA_BUF_LEN 1024
 
-// Ring buffer size (1MB)
-#define RING_BUF_SIZE (1024 * 1024)
 
 // Fingerprint sensor configuration
 #define FINGERPRINT_TX 1
@@ -118,6 +128,7 @@ private:
 
 #endif // CONFIG_H
 
+
 ############################################
 
 ############# include\esp_now_manager.h #############
@@ -133,7 +144,7 @@ private:
 
 class ESPNow {
 public:
-    void begin(EventDispatcher &dispatcher);
+    static void begin(EventDispatcher &dispatcher);
 
     static void sendCommand(const char *command);
 
@@ -296,15 +307,16 @@ private:
 
 class FingerprintHandler {
 public:
-    FingerprintHandler();
+    explicit FingerprintHandler(const HardwareSerial &serial);
 
     void begin(EventDispatcher &dispatcher);
 
 private:
     static void fingerprintTask(void *parameter);
 
+    HardwareSerial mySerial;
     Adafruit_Fingerprint fingerprint;
-    EventDispatcher *eventDispatcher{};
+    static EventDispatcher *eventDispatcher;
 };
 
 #endif // FINGERPRINT_H
@@ -489,7 +501,7 @@ class NetworkManager {
 public:
     void begin(EventDispatcher &dispatcher);
 
-    static void loop();
+    [[noreturn]] static void loop(void *pvParameters);
 
     static void sendInitMessage();
 
@@ -633,24 +645,17 @@ private:
 #include "audio.h"
 #include "config.h"
 #include "network_manager.h"
-#include <esp_log.h>
-#include <esp_heap_caps.h>
 #include "logger.h"
 
 static const char *TAG = "AUDIO";
 
 EventDispatcher *Audio::eventDispatcher = nullptr;
-RingbufHandle_t Audio::recordBuffer = nullptr;
-RingbufHandle_t Audio::playBuffer = nullptr;
-TaskHandle_t Audio::i2sReaderTaskHandle = nullptr;
-TaskHandle_t Audio::i2sWriterTaskHandle = nullptr;
-TaskHandle_t Audio::audioTransmissionTaskHandle = nullptr;
 volatile bool Audio::isRecording = false;
 volatile bool Audio::isPlaying = false;
-
-// Audio transmission configuration
-const size_t Audio::TRANSMISSION_BUFFER_SIZE = 16384;
-const TickType_t Audio::TRANSMISSION_TIMEOUT = pdMS_TO_TICKS(400); // 100ms timeout
+volatile bool Audio::isPrefetching = false;
+uint8_t *Audio::audioBuffer = nullptr;
+size_t Audio::audioBufferIndex = 0;
+size_t Audio::audioBufferSize = AUDIO_BUFFER_SIZE;
 
 const i2s_config_t Audio::i2sConfigRx = {
         .mode = (i2s_mode_t) (I2S_MODE_MASTER | I2S_MODE_RX),
@@ -661,7 +666,7 @@ const i2s_config_t Audio::i2sConfigRx = {
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
         .dma_buf_count = DMA_BUF_COUNT,
         .dma_buf_len = DMA_BUF_LEN,
-        .use_apll = false,
+        .use_apll = true,
         .tx_desc_auto_clear = false,
         .fixed_mclk = 0
 };
@@ -682,7 +687,7 @@ const i2s_config_t Audio::i2sConfigTx = {
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
         .dma_buf_count = DMA_BUF_COUNT,
         .dma_buf_len = DMA_BUF_LEN,
-        .use_apll = false,
+        .use_apll = true,
         .tx_desc_auto_clear = true,
         .fixed_mclk = 0
 };
@@ -697,12 +702,10 @@ const i2s_pin_config_t Audio::i2sPinConfigTx = {
 void Audio::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
 
-    // Create ring buffers
-    recordBuffer = xRingbufferCreate(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
-    playBuffer = xRingbufferCreate(RING_BUF_SIZE, RINGBUF_TYPE_BYTEBUF);
-
-    if (recordBuffer == nullptr || playBuffer == nullptr) {
-        LOG_E(TAG, "Failed to create ring buffers");
+    // Allocate audio buffer in PSRAM
+    audioBuffer = (uint8_t *) ps_malloc(AUDIO_BUFFER_SIZE);
+    if (audioBuffer == nullptr) {
+        LOG_E(TAG, "Failed to allocate audio buffer in PSRAM");
         return;
     }
 
@@ -712,145 +715,114 @@ void Audio::begin(EventDispatcher &dispatcher) {
     ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_1, &i2sConfigTx, 0, nullptr));
     ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_1, &i2sPinConfigTx));
 
-    // Create tasks
-    xTaskCreatePinnedToCore(i2sReaderTask, "I2S Reader Task", 4096, nullptr, 5, &i2sReaderTaskHandle, 0);
-    xTaskCreatePinnedToCore(i2sWriterTask, "I2S Writer Task", 4096, nullptr, 5, &i2sWriterTaskHandle, 1);
-    xTaskCreatePinnedToCore(audioTransmissionTask, "Audio Transmission Task", 4096, nullptr, 4, &audioTransmissionTaskHandle, 1);
+    xTaskCreatePinnedToCore(audioTask, "AudioTask", 8192, nullptr, 5, nullptr, 1);
+}
 
-    // Initially suspend all tasks
-    vTaskSuspend(i2sReaderTaskHandle);
-    vTaskSuspend(i2sWriterTaskHandle);
-    vTaskSuspend(audioTransmissionTaskHandle);
-
-    LOG_I(TAG, "Audio system initialized");
+size_t Audio::min(size_t a, size_t b) {
+    return (a < b) ? a : b;
 }
 
 void Audio::startRecording() {
     isRecording = true;
-    vTaskResume(i2sReaderTaskHandle);
-    vTaskResume(audioTransmissionTaskHandle);
+    audioBufferIndex = 0;
     LOG_I(TAG, "Recording started");
 }
 
 void Audio::stopRecording() {
+    LOG_I(TAG, "Stop recording called. Recorded %d bytes", audioBufferIndex);
     isRecording = false;
-    vTaskSuspend(i2sReaderTaskHandle);
-    vTaskSuspend(audioTransmissionTaskHandle);
-    LOG_I(TAG, "Recording stopped");
+    vTaskDelay(pdMS_TO_TICKS(100)); // Wait for last audio chunk to be read
+    sendAudioData();
 }
 
 void Audio::startPlayback() {
     isPlaying = true;
-    vTaskResume(i2sWriterTaskHandle);
-    vTaskDelay(pdMS_TO_TICKS(1000)); // Buffer for one second before starting playback
+    audioBufferIndex = 0;
     LOG_I(TAG, "Playback started");
 }
 
 void Audio::stopPlayback() {
     isPlaying = false;
-    LOG_I(TAG, "Stopping playback...");
-    vTaskSuspend(i2sWriterTaskHandle);
-    i2s_zero_dma_buffer(I2S_NUM_1);
-
-    // Clear the play buffer
-    size_t itemSize;
-    void *item;
-    while ((item = xRingbufferReceive(playBuffer, &itemSize, 0)) != nullptr) {
-        vRingbufferReturnItem(playBuffer, item);
-    }
-
-    LOG_I(TAG, "Playback stopped and buffers cleared");
+    vTaskDelay(100); // Wait for last audio chunk to be sent
+    LOG_I(TAG, "Playback stopped");
+    clearAudioBuffer();
 }
 
-void Audio::addDataToBuffer(const uint8_t *data, size_t length) {
-    if (xRingbufferSend(playBuffer, data, length, pdMS_TO_TICKS(100)) != pdTRUE) {
-        ESP_LOGW(TAG, "Failed to add data to play buffer");
+void Audio::startPrefetch() {
+    isPrefetching = true;
+    audioBufferIndex = 0;
+    LOG_I(TAG, "Prefetching started");
+}
+
+void Audio::stopPrefetch() {
+    isPrefetching = false;
+    LOG_I(TAG, "Prefetching stopped");
+}
+
+void Audio::addPrefetchData(const uint8_t *data, size_t length) {
+    if (isPrefetching && (audioBufferIndex + length) <= audioBufferSize) {
+        memcpy(audioBuffer + audioBufferIndex, data, length);
+        audioBufferIndex += length;
     }
 }
 
-void Audio::i2sReaderTask(void *parameter) {
+void Audio::clearAudioBuffer() {
+    memset(audioBuffer, 0, audioBufferSize);
+    audioBufferIndex = 0;
+}
+
+void Audio::sendAudioData() {
+    const size_t chunkSize = 1024; // Send 1KB at a time
+    size_t remainingBytes = audioBufferIndex;
+    size_t offset = 0;
+
+    while (remainingBytes > 0) {
+        size_t bytesToSend = min(chunkSize, remainingBytes);
+        NetworkManager::sendAudioChunk(audioBuffer + offset, bytesToSend);
+
+        remainingBytes -= bytesToSend;
+        offset += bytesToSend;
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    LOG_I(TAG, "Sent %u bytes of audio data in chunks", audioBufferIndex);
+}
+
+void Audio::audioTask(void *parameter) {
     size_t bytesRead = 0;
-    const size_t bufferSize = DMA_BUF_LEN * 2;
-    auto *buffer = (uint8_t *) heap_caps_malloc(bufferSize, MALLOC_CAP_DMA);
-
-    if (!buffer) {
-        LOG_E(TAG, "Failed to allocate memory for audio buffer");
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    while (true) {
-        if (isRecording) {
-            ESP_ERROR_CHECK(i2s_read(I2S_NUM_0, buffer, bufferSize, &bytesRead, portMAX_DELAY));
-            if (bytesRead > 0) {
-                if (xRingbufferSend(recordBuffer, buffer, bytesRead, pdMS_TO_TICKS(100)) != pdTRUE) {
-                    ESP_LOGW(TAG, "Failed to add data to record buffer");
-                }
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-
-    heap_caps_free(buffer);
-}
-
-void Audio::i2sWriterTask(void *parameter) {
     size_t bytesWritten = 0;
-    size_t itemSize = 0;
-    uint8_t *item = nullptr;
-
-    while (true) {
-        if (isPlaying) {
-            item = (uint8_t *) xRingbufferReceive(playBuffer, &itemSize, pdMS_TO_TICKS(10));
-            if (item != nullptr) {
-                ESP_ERROR_CHECK(i2s_write(I2S_NUM_1, item, itemSize, &bytesWritten, portMAX_DELAY));
-                vRingbufferReturnItem(playBuffer, item);
-            }
-        }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
-
-void Audio::audioTransmissionTask(void *parameter) {
-    size_t itemSize = 0;
-    uint8_t *item = nullptr;
-    auto *transmissionBuffer = (uint8_t *) heap_caps_malloc(TRANSMISSION_BUFFER_SIZE + 6, MALLOC_CAP_DMA);
-    size_t bufferedSize = 0;
-    TickType_t lastSendTime = xTaskGetTickCount();
-
-    if (!transmissionBuffer) {
-        LOG_E(TAG, "Failed to allocate memory for transmission buffer");
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    memcpy(transmissionBuffer, "AUDIO:", 6);
 
     while (true) {
         if (isRecording) {
-            item = (uint8_t *) xRingbufferReceive(recordBuffer, &itemSize, pdMS_TO_TICKS(10));
-            if (item != nullptr) {
-                size_t remainingSpace = TRANSMISSION_BUFFER_SIZE - bufferedSize;
-                size_t copySize = (itemSize < remainingSpace) ? itemSize : remainingSpace;
-                memcpy(transmissionBuffer + 6 + bufferedSize, item, copySize);
-                bufferedSize += copySize;
-                vRingbufferReturnItem(recordBuffer, item);
-
-                if (bufferedSize >= TRANSMISSION_BUFFER_SIZE || (xTaskGetTickCount() - lastSendTime) >= TRANSMISSION_TIMEOUT) {
-                    NetworkManager::sendAudioChunk(transmissionBuffer, bufferedSize + 6);
-                    bufferedSize = 0;
-                    lastSendTime = xTaskGetTickCount();
+            if (audioBufferIndex + DMA_BUF_LEN <= audioBufferSize) {
+                esp_err_t result = i2s_read(I2S_NUM_0, audioBuffer + audioBufferIndex, DMA_BUF_LEN, &bytesRead, portMAX_DELAY);
+                if (result == ESP_OK) {
+                    audioBufferIndex += bytesRead;
+                } else {
+                    LOG_E(TAG, "Error reading from I2S: %d", result);
                 }
+            } else {
+                LOG_W(TAG, "Audio buffer full. Stopping recording.");
+                stopRecording();
             }
-        } else {
-            // If not recording, reset the buffered size and last send time
-            bufferedSize = 0;
-            lastSendTime = xTaskGetTickCount();
+        } else if (isPlaying) {
+            if (audioBufferIndex < audioBufferSize) {
+                size_t bytesToWrite = min(DMA_BUF_LEN, audioBufferSize - audioBufferIndex);
+                esp_err_t result = i2s_write(I2S_NUM_1, audioBuffer + audioBufferIndex, bytesToWrite, &bytesWritten, portMAX_DELAY);
+                if (result == ESP_OK) {
+                    audioBufferIndex += bytesWritten;
+                } else {
+                    LOG_E(TAG, "Error writing to I2S: %d", result);
+                }
+            } else {
+                LOG_I(TAG, "Playback completed.");
+                stopPlayback();
+            }
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
 
-    heap_caps_free(transmissionBuffer);
+        vTaskDelay(pdMS_TO_TICKS(10)); // Small delay to prevent task from hogging CPU
+    }
 }
 
 #########################################
@@ -862,9 +834,8 @@ void Audio::audioTransmissionTask(void *parameter) {
 
 static const char *TAG = "ESPNow";
 
-EventDispatcher *ESPNow::eventDispatcher = nullptr;
 esp_now_peer_info_t ESPNow::peerInfo;
-
+EventDispatcher *ESPNow::eventDispatcher = nullptr;
 const uint8_t ESPNow::broadcastAddress[] = {0x34, 0x98, 0x7A, 0xB6, 0x8E, 0x88};
 
 void ESPNow::begin(EventDispatcher &dispatcher) {
@@ -998,50 +969,63 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
 
 void EventHandler::handleTelegramAudioCommand(const Event &event) {
     std::string action = event.data;
+    StaticJsonDocument<200> data;
 
     if (action == "start_recording") {
-        audio.startRecording();
-        LOG_I(TAG, "Recording started from Telegram.");
+        Audio::startRecording();
+        data["action"] = "start_recording";
     } else if (action == "stop_recording") {
-        audio.stopRecording();
-        LOG_I(TAG, "Recording stopped from Telegram.");
+        Audio::stopRecording();
+        data["action"] = "stop_recording";
     } else if (action == "start_playing") {
-        audio.startPlayback();
-        LOG_I(TAG, "Started playback from Telegram.");
+        Audio::startPlayback();
+        data["action"] = "start_playing";
     } else if (action == "stop_playing") {
-        audio.stopPlayback();
-        LOG_I(TAG, "Stopped playback from Telegram.");
+        Audio::stopPlayback();
+        data["action"] = "stop_playing";
+    } else if (action == "start_prefetch") {
+        Audio::startPrefetch();
+        data["action"] = "start_prefetch";
+    } else if (action == "stop_prefetch") {
+        Audio::stopPrefetch();
+        data["action"] = "stop_prefetch";
+    } else {
+        LOG_W(TAG, "Unknown Telegram audio command: %s", action.c_str());
+        return;
     }
+
+    LOG_I(TAG, "Telegram audio command executed: %s", action.c_str());
 }
 
 void EventHandler::handleESPAudioCommand(const Event &event) {
     std::string action = event.data;
-
     StaticJsonDocument<200> data;
+
     if (action == "start_recording") {
-        audio.startRecording();
+        Audio::startRecording();
         data["action"] = "start_recording";
-        network.sendEvent("audio", data.as<JsonObject>());
-        LOG_I(TAG, "Recording started from ESP.");
-
     } else if (action == "stop_recording") {
-        audio.stopRecording();
+        Audio::stopRecording();
         data["action"] = "stop_recording";
-        network.sendEvent("audio", data.as<JsonObject>());
-        LOG_I(TAG, "Recording stopped from ESP.");
-
     } else if (action == "start_playing") {
-        audio.startPlayback();
+        Audio::startPlayback();
         data["action"] = "start_playing";
-        network.sendEvent("audio", data.as<JsonObject>());
-        LOG_I(TAG, "Started playback from ESP.");
-
     } else if (action == "stop_playing") {
-        audio.stopPlayback();
+        Audio::stopPlayback();
         data["action"] = "stop_playing";
-        network.sendEvent("audio", data.as<JsonObject>());
-        LOG_I(TAG, "Stopped playback from ESP.");
+    } else if (action == "start_prefetch") {
+        Audio::startPrefetch();
+        data["action"] = "start_prefetch";
+    } else if (action == "stop_prefetch") {
+        Audio::stopPrefetch();
+        data["action"] = "stop_prefetch";
+    } else {
+        LOG_W(TAG, "Unknown ESP audio command: %s", action.c_str());
+        return;
     }
+
+    network.sendEvent("audio", data.as<JsonObject>());
+    LOG_I(TAG, "ESP audio command executed: %s", action.c_str());
 }
 
 
@@ -1050,7 +1034,9 @@ void EventHandler::handleWebSocketConnected(const Event &event) {
 }
 
 void EventHandler::handleAudioDataReceived(const Event &event) {
-    audio.addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    const auto *audioData = reinterpret_cast<const uint8_t *>(event.data.c_str());
+    size_t dataLength = event.dataLength;
+    Audio::addPrefetchData(audioData, dataLength);
 }
 
 void EventHandler::handleFingerprintMatch(const Event &event) {
@@ -1148,10 +1134,10 @@ void EventHandler::handleVisitorEntered(const Event &event) {
 
 static const char *TAG = "FINGERPRINT";
 
-FingerprintHandler::FingerprintHandler() {
-    HardwareSerial mySerial(1);
+EventDispatcher *FingerprintHandler::eventDispatcher = nullptr;
+
+FingerprintHandler::FingerprintHandler(const HardwareSerial &serial) : mySerial(serial), fingerprint(&mySerial) {
     mySerial.begin(57600, SERIAL_8N1, FINGERPRINT_RX, FINGERPRINT_TX);
-    fingerprint = Adafruit_Fingerprint(&mySerial);
     fingerprint.begin(57600);
 }
 
@@ -1207,7 +1193,6 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 
 
 
-
 ###############################################
 
 ############# src\gate_control.cpp #############
@@ -1222,13 +1207,14 @@ EventDispatcher *GateControl::eventDispatcher = nullptr;
 volatile bool GateControl::isGateOpen = false;
 SemaphoreHandle_t GateControl::gateStateMutex = xSemaphoreCreateMutex();
 
-GateControl::GateControl() = default;
-
-void GateControl::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
+GateControl::GateControl() {
     motorPin1 = MOTOR_PIN1;
     motorPin2 = MOTOR_PIN2;
     enablePin = MOTOR_ENABLE;
+};
+
+void GateControl::begin(EventDispatcher &dispatcher) {
+    eventDispatcher = &dispatcher;
 
     pinMode(motorPin1, OUTPUT);
     pinMode(motorPin2, OUTPUT);
@@ -1318,11 +1304,10 @@ static const char *TAG = "LED_CONTROL";
 
 EventDispatcher *LEDControl::eventDispatcher = nullptr;
 
-LEDControl::LEDControl() = default;
+LEDControl::LEDControl() { pin = LED_STRIP_PIN; };
 
 void LEDControl::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    pin = LED_STRIP_PIN;
 
     pinMode(pin, OUTPUT);
     digitalWrite(pin, LOW);
@@ -1461,17 +1446,14 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
     webSocket.begin(WS_SERVER, WS_PORT);
     webSocket.onEvent(webSocketEvent);
 
-    xTaskCreate([](void *param) {
-        while (true) {
-            NetworkManager::loop();
-            vTaskDelay(10);
-        }
-    }, "WiFi Task", 8192, this, 2, nullptr);
+    xTaskCreate(NetworkManager::loop, "WiFi Task", 8192, this, 2, nullptr);
 }
 
-void NetworkManager::loop() {
-    webSocket.loop();
-    vTaskDelay(pdMS_TO_TICKS(5));
+[[noreturn]] void NetworkManager::loop(void *pvParameters) {
+    while (true) {
+        webSocket.loop();
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
 }
 
 void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t length) {
@@ -1541,7 +1523,22 @@ void NetworkManager::sendInitMessage() {
 }
 
 void NetworkManager::sendAudioChunk(const uint8_t *data, size_t len) {
-    webSocket.sendBIN(data, len);
+    if (webSocket.isConnected()) {
+        // Allocate a new buffer with space for the prefix
+        size_t totalLen = len + 6; // 6 is the length of "AUDIO:"
+        auto *buffer = new uint8_t[totalLen];
+
+        // Copy the prefix and the audio data
+        memcpy(buffer, "AUDIO:", 6);
+        memcpy(buffer + 6, data, len);
+
+        // Send the prefixed data
+        webSocket.sendBIN(buffer, totalLen);
+
+        delete[] buffer;
+    } else {
+        LOG_W(TAG, "WebSocket not connected. Cannot send audio chunk.");
+    }
 }
 
 void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
@@ -1565,7 +1562,6 @@ void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
 static const char *TAG_PIR = "PIR_SENSOR";
 static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
 
-// PIR Sensor Implementation
 EventDispatcher *PIRSensor::eventDispatcher = nullptr;
 
 PIRSensor::PIRSensor() : lastDebounceTime(0), lastState(LOW), state(LOW) { pin = PIR_PIN; }
@@ -1608,7 +1604,6 @@ void PIRSensor::pirTask(void *parameter) {
     }
 }
 
-// Break Beam Sensor Implementation
 EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
 
 BreakBeamSensor::BreakBeamSensor() : lastDebounceTime(0), lastState(HIGH), state(HIGH) { pin = BREAK_BEAM_PIN; }

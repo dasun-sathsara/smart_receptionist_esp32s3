@@ -13,10 +13,10 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_ESP_AUDIO, [this](const Event &e) { handleESPAudioCommand(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
 
-    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
+    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(); });
 
     dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleFingerprintMatch(e); });
-    dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
+    dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(); });
 
     dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
     dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
@@ -25,92 +25,123 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(LED_TURNED_OFF, [this](const Event &e) { handleChangeStateSuccess(e); });
 
     dispatcher.registerCallback(PASSWORD_VALID, [this](const Event &e) { handlePasswordValid(e); });
-    dispatcher.registerCallback(PASSWORD_INVALID, [this](const Event &e) { handlePasswordInvalid(e); });
+    dispatcher.registerCallback(PASSWORD_INVALID, [this](const Event &e) { handlePasswordInvalid(); });
 
-    dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleAccessGranted(e); });
-    dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleAccessDenied(e); });
+    dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleAccessGranted(); });
+    dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleAccessDenied(); });
 
-    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
-    dispatcher.registerCallback(PERSON_DETECTED, [this](const Event &e) { handlePersonDetected(e); });
+    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(); });
+    dispatcher.registerCallback(PERSON_DETECTED, [this](const Event &e) { handlePersonDetected(); });
 
-    dispatcher.registerCallback(VISITOR_ENTERED, [this](const Event &e) { handleVisitorEntered(e); });
+    dispatcher.registerCallback(VISITOR_ENTERED, [this](const Event &e) { handleVisitorEntered(); });
+    dispatcher.registerCallback(AUDIO_DATA_READY, [this](const Event &e) { handleAudioDataReady(e); });
+
+    dispatcher.registerCallback(RECORDING_SENT, [this](const Event &e) { handleRecordingSent(); });
+
+    dispatcher.registerCallback(NO_AUDIO_DATA, [this](const Event &e) { ui.setStateFor(3, UIState::NO_AUDIO_DATA); });
 }
 
 
 void EventHandler::handleTelegramAudioCommand(const Event &event) {
     std::string action = event.data;
+    StaticJsonDocument<200> data;
 
     if (action == "start_recording") {
         audio.startRecording();
-        LOG_I(TAG, "Recording started from Telegram.");
+        data["action"] = "start_recording";
     } else if (action == "stop_recording") {
         audio.stopRecording();
-        LOG_I(TAG, "Recording stopped from Telegram.");
+        data["action"] = "stop_recording";
     } else if (action == "start_playing") {
         audio.startPlayback();
-        LOG_I(TAG, "Started playback from Telegram.");
+        data["action"] = "start_playing";
     } else if (action == "stop_playing") {
         audio.stopPlayback();
-        LOG_I(TAG, "Stopped playback from Telegram.");
+        data["action"] = "stop_playing";
+    } else if (action == "start_prefetch") {
+        audio.startPrefetch();
+        data["action"] = "start_prefetch";
+    } else if (action == "stop_prefetch") {
+        audio.stopPrefetch();
+        data["action"] = "stop_prefetch";
+    } else {
+        LOG_W(TAG, "Unknown Telegram audio command: %s", action.c_str());
+        return;
     }
+
+    LOG_I(TAG, "Telegram audio command executed: %s", action.c_str());
+}
+
+void EventHandler::handleRecordingSent() {
+    StaticJsonDocument<200> data;
+    data["event_type"] = "recording_sent";
+    network.sendEvent("recording_sent", data.as<JsonObject>());
+    LOG_I(TAG, "Recording sent event dispatched");
+}
+
+void EventHandler::handleAudioDataReady(const Event &event) {
+    network.sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.c_str()), event.dataLength);
 }
 
 void EventHandler::handleESPAudioCommand(const Event &event) {
     std::string action = event.data;
-
     StaticJsonDocument<200> data;
+
     if (action == "start_recording") {
         audio.startRecording();
         data["action"] = "start_recording";
-        network.sendEvent("audio", data.as<JsonObject>());
-        LOG_I(TAG, "Recording started from ESP.");
-
     } else if (action == "stop_recording") {
         audio.stopRecording();
         data["action"] = "stop_recording";
-        network.sendEvent("audio", data.as<JsonObject>());
-        LOG_I(TAG, "Recording stopped from ESP.");
-
     } else if (action == "start_playing") {
         audio.startPlayback();
         data["action"] = "start_playing";
-        network.sendEvent("audio", data.as<JsonObject>());
-        LOG_I(TAG, "Started playback from ESP.");
-
     } else if (action == "stop_playing") {
         audio.stopPlayback();
         data["action"] = "stop_playing";
-        network.sendEvent("audio", data.as<JsonObject>());
-        LOG_I(TAG, "Stopped playback from ESP.");
+    } else if (action == "start_prefetch") {
+        audio.startPrefetch();
+        data["action"] = "start_prefetch";
+    } else if (action == "stop_prefetch") {
+        audio.stopPrefetch();
+        data["action"] = "stop_prefetch";
+    } else {
+        LOG_W(TAG, "Unknown ESP audio command: %s", action.c_str());
+        return;
     }
+
+    network.sendEvent("audio", data.as<JsonObject>());
+    LOG_I(TAG, "ESP audio command executed: %s", action.c_str());
 }
 
 
-void EventHandler::handleWebSocketConnected(const Event &event) {
+void EventHandler::handleWebSocketConnected() {
     network.sendInitMessage();
 }
 
 void EventHandler::handleAudioDataReceived(const Event &event) {
-    audio.addDataToBuffer(reinterpret_cast<const uint8_t *>(event.data.data()), event.dataLength);
+    const auto *audioData = reinterpret_cast<const uint8_t *>(event.data.c_str());
+    size_t dataLength = event.dataLength;
+    Audio::addPrefetchData(audioData, dataLength);
 }
 
 void EventHandler::handleFingerprintMatch(const Event &event) {
     ui.setStateFor(2, UIState::FINGERPRINT_MATCHED);
-    handleResidentAuthorized(event);
+    handleResidentAuthorized();
     LOG_I(TAG, "Fingerprint match found!");
 }
 
-void EventHandler::handleFingerprintNoMatch(const Event &event) {
+void EventHandler::handleFingerprintNoMatch() {
     ui.setStateFor(2, UIState::FINGERPRINT_NO_MATCH);
     LOG_I(TAG, "Fingerprint no match found!");
 }
 
 void EventHandler::handlePasswordValid(const Event &event) {
-    handleResidentAuthorized(event);
+    handleResidentAuthorized();
     LOG_I(TAG, "Password correct!");
 }
 
-void EventHandler::handlePasswordInvalid(const Event &event) {
+void EventHandler::handlePasswordInvalid() {
     LOG_I(TAG, "Password incorrect!");
 }
 
@@ -144,35 +175,35 @@ void EventHandler::handleChangeStateSuccess(const Event &event) {
     network.sendEvent("change_state", data.as<JsonObject>());
 }
 
-void EventHandler::handleResidentAuthorized(const Event &event) {
+void EventHandler::handleResidentAuthorized() {
     gate.openGate();
     LOG_I(TAG, "Resident authorized!");
 }
 
-void EventHandler::handleAccessGranted(const Event &event) {
+void EventHandler::handleAccessGranted() {
     ui.setState(UIState::ACCESS_GRANTED);
     gate.openGate();
     LOG_I(TAG, "Access granted!");
 }
 
-void EventHandler::handleAccessDenied(const Event &event) {
+void EventHandler::handleAccessDenied() {
     ui.setState(UIState::ACCESS_DENIED);
     LOG_I(TAG, "Access denied!");
 }
 
-void EventHandler::handleMotionDetected(const Event &event) {
+void EventHandler::handleMotionDetected() {
     ui.setStateFor(2, UIState::MOTION_DETECTED);
     espNow.sendCommand("capture_image");
     network.sendEvent("motion_detected", JsonObject());
     LOG_I(TAG, "Motion detected and visitor identification initiated!");
 }
 
-void EventHandler::handlePersonDetected(const Event &event) {
+void EventHandler::handlePersonDetected() {
     network.sendEvent("person_detected", JsonObject());
     LOG_I(TAG, "Person detected!");
 }
 
-void EventHandler::handleVisitorEntered(const Event &event) {
+void EventHandler::handleVisitorEntered() {
     LOG_I(TAG, "Visitor entered!");
     vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for 5 seconds before closing the gate
     gate.closeGate();

@@ -8,17 +8,26 @@
 
 class Audio {
 public:
-    void begin(EventDispatcher &dispatcher);
+    static void begin(EventDispatcher &dispatcher);
+
     static void startRecording();
+
     static void stopRecording();
+
     static void startPlayback();
+
     static void stopPlayback();
 
+    static void addPrefetchData(const uint8_t *data, size_t length);
+
+    static void startPrefetch();
+
+    static void stopPrefetch();
+
 private:
+    static void audioTask(void *parameter);
 
-    static void audioTransmissionTask(void *parameter);
     static EventDispatcher *eventDispatcher;
-
 
     // I2S configuration
     static const i2s_config_t i2sConfigRx;
@@ -28,7 +37,17 @@ private:
 
     static volatile bool isRecording;
     static volatile bool isPlaying;
+    static volatile bool isPrefetching;
 
+    static uint8_t *audioBuffer;
+    static size_t audioBufferIndex;
+    static size_t audioBufferSize;
+
+    static void clearAudioBuffer();
+
+    static void sendAudioData();
+
+    static size_t min(size_t a, size_t b);
 };
 
 #endif // AUDIO_H

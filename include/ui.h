@@ -23,6 +23,7 @@ enum class UIState {
     PASSWORD_INCORRECT,
     SAY_CHEESE,
     WELCOME,
+    NO_AUDIO_DATA
 };
 
 class UI {

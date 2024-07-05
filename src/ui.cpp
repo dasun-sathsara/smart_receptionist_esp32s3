@@ -307,6 +307,14 @@ void UI::displayCurrentState() {
             u8g2.drawFrame(1, 1, 125, 61);
             u8g2.drawXBMP(48, 41, 29, 14, image_FaceNormal_bits);
             break;
+        case UIState::NO_AUDIO_DATA:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(28, 29, "NO AUDIO");
+            u8g2.drawStr(45, 46, "DATA");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
         case UIState::PASSWORD_INCORRECT:
             u8g2.setDrawColor(2);
             u8g2.setFont(u8g2_font_profont17_tr);

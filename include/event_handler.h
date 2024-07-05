@@ -26,37 +26,39 @@ private:
 
     void handleTelegramAudioCommand(const Event &event);
 
-    void handleWebSocketConnected(const Event &event);
-
     void handleAudioDataReceived(const Event &event);
-
-    void handleAudioChunkRead(const Event &event);
 
     void handleFingerprintMatch(const Event &event);
 
-    void handleFingerprintNoMatch(const Event &event);
-
     void handleChangeState(const Event &event);
-
-    void handleChangeStateSuccess(const Event &event);
-
-    void handleResidentAuthorized(const Event &event);
-
-    void handleAccessGranted(const Event &event);
-
-    void handleAccessDenied(const Event &event);
-
-    void handleMotionDetected(const Event &event);
-
-    void handleESPAudioCommand(const Event &event);
 
     void handlePasswordValid(const Event &event);
 
-    void handlePasswordInvalid(const Event &event);
+    void handleChangeStateSuccess(const Event &event);
 
-    void handlePersonDetected(const Event &event);
+    void handleESPAudioCommand(const Event &event);
 
-    void handleVisitorEntered(const Event &event);
+    void handleAudioDataReady(const Event &event);
+
+    void handleWebSocketConnected();
+
+    void handleFingerprintNoMatch();
+
+    void handleResidentAuthorized();
+
+    void handleAccessGranted();
+
+    void handleAccessDenied();
+
+    void handleMotionDetected();
+
+    void handlePasswordInvalid();
+
+    void handlePersonDetected();
+
+    void handleVisitorEntered();
+
+    void handleRecordingSent();
 };
 
 #endif // EVENT_HANDLER_H

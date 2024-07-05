@@ -5,10 +5,13 @@
 #include "U8g2lib.h"
 
 // WiFi credentials
-#define WIFI_SSID "Xperia 1 II"
+//#define WIFI_SSID "Netgear Fiber"
+//#define WIFI_PASSWORD "Mqwmu2fCakcRRmW"
+#define WIFI_SSID "LG G7"
 #define WIFI_PASSWORD "12345678"
 
 // WebSocket server details
+//#define WS_SERVER "192.168.8.35"
 #define WS_SERVER "35.197.142.113"
 #define WS_PORT 8765
 
@@ -16,6 +19,8 @@
 #define MOTOR_PIN1 39
 #define MOTOR_PIN2 38
 #define MOTOR_ENABLE 47
+
+#define AUDIO_BUFFER_SIZE (6 * 1024 * 1024) // 6MB buffer (Allocated in PSRAM)
 
 // PIR sensor configuration
 #define PIR_PIN 42
@@ -37,15 +42,12 @@
 #define I2S_SPEAKER_SERIAL_DATA 13
 
 // Audio settings
-#define SAMPLE_RATE 48000
+#define SAMPLE_RATE 16000
 #define BITS_PER_SAMPLE 16
 
 // DMA buffer settings
 #define DMA_BUF_COUNT 8
 #define DMA_BUF_LEN 1024
-
-// Ring buffer size (1MB)
-#define RING_BUF_SIZE (1024 * 1024)
 
 // Fingerprint sensor configuration
 #define FINGERPRINT_TX 1
@@ -57,7 +59,6 @@
 #define I2C_ADDRESS 0x3C
 
 // Keypad configuration
-
 #define ROW1 4
 #define ROW2 5
 #define ROW3 6
