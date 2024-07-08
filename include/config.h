@@ -5,13 +5,10 @@
 #include "U8g2lib.h"
 
 // WiFi credentials
-//#define WIFI_SSID "Netgear Fiber"
-//#define WIFI_PASSWORD "Mqwmu2fCakcRRmW"
 #define WIFI_SSID "LG G7"
 #define WIFI_PASSWORD "12345678"
 
 // WebSocket server details
-//#define WS_SERVER "192.168.8.35"
 #define WS_SERVER "35.197.142.113"
 #define WS_PORT 8765
 
@@ -20,6 +17,7 @@
 #define MOTOR_PIN2 38
 #define MOTOR_ENABLE 47
 
+// Audio buffer size
 #define AUDIO_BUFFER_SIZE (6 * 1024 * 1024) // 6MB buffer (Allocated in PSRAM)
 
 // PIR sensor configuration
@@ -30,6 +28,9 @@
 
 // LED strip configuration
 #define LED_STRIP_PIN 40
+
+// Door Sensor configuration
+#define REED_SWITCH_PIN 14
 
 // I2S configuration for INMP441 microphone
 #define I2S_MIC_SERIAL_CLOCK 3
@@ -66,5 +67,13 @@
 #define COL1 15
 #define COL2 16
 #define COL3 17
+
+// Gate control configuration
+#define GATE_PWM_FREQ 30000
+#define GATE_PWM_CHANNEL 0
+#define GATE_PWM_RESOLUTION 8
+#define GATE_DUTY_CYCLE 200
+#define GATE_OPERATION_TIME 8500 // 8.5 seconds in milliseconds
+#define GATE_WAIT_TIME 5000 // 5 seconds in milliseconds
 
 #endif // CONFIG_H

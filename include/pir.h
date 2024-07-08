@@ -19,21 +19,4 @@ private:
     static EventDispatcher *eventDispatcher;
     unsigned long lastDebounceTime;
 };
-
-class BreakBeamSensor {
-public:
-    BreakBeamSensor();
-
-    void begin(EventDispatcher &dispatcher);
-
-private:
-    static void breakBeamTask(void *parameter);
-
-    int pin;
-    unsigned long lastDebounceTime;
-    int lastState;
-    int state;
-    static EventDispatcher *eventDispatcher;
-};
-
 #endif // SENSORS_H

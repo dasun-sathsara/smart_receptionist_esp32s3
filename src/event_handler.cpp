@@ -5,39 +5,45 @@
 
 static const char *TAG = "EventHandler";
 
-EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led, UI &ui, ESPNow &espNow)
+EventHandler::EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow)
         : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
+    // Audio Commands
     dispatcher.registerCallback(CMD_TG_AUDIO, [this](const Event &e) { handleTelegramAudioCommand(e); });
     dispatcher.registerCallback(CMD_ESP_AUDIO, [this](const Event &e) { handleESPAudioCommand(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
+    dispatcher.registerCallback(AUDIO_DATA_READY, [this](const Event &e) { handleAudioDataReady(e); });
 
+    // WebSocket Events
     dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(); });
 
+    // Authentication Events
     dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleFingerprintMatch(e); });
     dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(); });
+    dispatcher.registerCallback(PASSWORD_VALID, [this](const Event &e) { handlePasswordValid(e); });
+    dispatcher.registerCallback(PASSWORD_INVALID, [this](const Event &e) { handlePasswordInvalid(); });
 
+    // State Change Commands
     dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
     dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(GATE_CLOSED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_ON, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_OFF, [this](const Event &e) { handleChangeStateSuccess(e); });
 
-    dispatcher.registerCallback(PASSWORD_VALID, [this](const Event &e) { handlePasswordValid(e); });
-    dispatcher.registerCallback(PASSWORD_INVALID, [this](const Event &e) { handlePasswordInvalid(); });
-
+    // Access Control
     dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleAccessGranted(); });
     dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleAccessDenied(); });
 
+    // Detection Events
     dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(); });
     dispatcher.registerCallback(PERSON_DETECTED, [this](const Event &e) { handlePersonDetected(); });
 
+    // Gate Events
     dispatcher.registerCallback(VISITOR_ENTERED, [this](const Event &e) { handleVisitorEntered(); });
-    dispatcher.registerCallback(AUDIO_DATA_READY, [this](const Event &e) { handleAudioDataReady(e); });
 
+    // Miscellaneous Events
     dispatcher.registerCallback(RECORDING_SENT, [this](const Event &e) { handleRecordingSent(); });
-
     dispatcher.registerCallback(NO_AUDIO_DATA, [this](const Event &e) { ui.setStateFor(3, UIState::NO_AUDIO_DATA); });
 }
 
@@ -204,7 +210,8 @@ void EventHandler::handlePersonDetected() {
 }
 
 void EventHandler::handleVisitorEntered() {
-    LOG_I(TAG, "Visitor entered!");
-    vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for 5 seconds before closing the gate
-    gate.closeGate();
+    LOG_I(TAG, "Visitor entered the premises!");
+    StaticJsonDocument<256> data;
+    data["event_type"] = "visitor_entered";
+    network.sendEvent("visitor_entered", data.as<JsonObject>());
 }

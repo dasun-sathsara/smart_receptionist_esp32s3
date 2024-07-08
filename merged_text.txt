@@ -65,11 +65,11 @@ private:
 #include "U8g2lib.h"
 
 // WiFi credentials
-#define WIFI_SSID "Xperia 1 II"
+#define WIFI_SSID "LG G7"
 #define WIFI_PASSWORD "12345678"
 
 // WebSocket server details
-#define WS_SERVER "192.168.8.35"
+#define WS_SERVER "35.197.142.113"
 #define WS_PORT 8765
 
 // L298N motor driver configuration
@@ -77,7 +77,8 @@ private:
 #define MOTOR_PIN2 38
 #define MOTOR_ENABLE 47
 
-#define AUDIO_BUFFER_SIZE (6 * 1024 * 1024)
+// Audio buffer size
+#define AUDIO_BUFFER_SIZE (6 * 1024 * 1024) // 6MB buffer (Allocated in PSRAM)
 
 // PIR sensor configuration
 #define PIR_PIN 42
@@ -87,6 +88,9 @@ private:
 
 // LED strip configuration
 #define LED_STRIP_PIN 40
+
+// Door Sensor configuration
+#define REED_SWITCH_PIN 14
 
 // I2S configuration for INMP441 microphone
 #define I2S_MIC_SERIAL_CLOCK 3
@@ -106,7 +110,6 @@ private:
 #define DMA_BUF_COUNT 8
 #define DMA_BUF_LEN 1024
 
-
 // Fingerprint sensor configuration
 #define FINGERPRINT_TX 1
 #define FINGERPRINT_RX 2
@@ -117,7 +120,6 @@ private:
 #define I2C_ADDRESS 0x3C
 
 // Keypad configuration
-
 #define ROW1 4
 #define ROW2 5
 #define ROW3 6
@@ -126,8 +128,15 @@ private:
 #define COL2 16
 #define COL3 17
 
-#endif // CONFIG_H
+// Gate control configuration
+#define GATE_PWM_FREQ 30000
+#define GATE_PWM_CHANNEL 0
+#define GATE_PWM_RESOLUTION 8
+#define GATE_DUTY_CYCLE 200
+#define GATE_OPERATION_TIME 8500 // 8.5 seconds in milliseconds
+#define GATE_WAIT_TIME 5000 // 5 seconds in milliseconds
 
+#endif // CONFIG_H
 
 ############################################
 
@@ -213,7 +222,7 @@ enum Events : EventType {
     AUDIO_DATA_RECEIVED,
     ESPNOW_DATA_RECEIVED,
     MOTION_DETECTED,
-    VISITOR_ENTERED,
+    BREAK_BEAM_TRIGGERED,
     CMD_CHANGE_STATE,
     GATE_OPENED,
     GATE_CLOSED,
@@ -223,7 +232,10 @@ enum Events : EventType {
     PASSWORD_VALID,
     PASSWORD_INVALID,
     CMD_GRANT_ACCESS,
-    CMD_DENY_ACCESS
+    CMD_DENY_ACCESS,
+    AUDIO_DATA_READY,
+    RECORDING_SENT,
+    NO_AUDIO_DATA
 };
 
 #endif // EVENTS_H
@@ -238,62 +250,67 @@ enum Events : EventType {
 #include "events.h"
 #include "audio.h"
 #include "network_manager.h"
-#include "gate_control.h"
-#include "led_control.h"
+#include "gate.h"
+#include "led.h"
 #include "ui.h"
 #include "esp_now.h"
 #include "esp_now_manager.h"
 
 class EventHandler {
 public:
-    EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led, UI &ui, ESPNow &espNow);
+    EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow);
 
     void registerCallbacks(EventDispatcher &dispatcher);
 
 private:
     Audio &audio;
     NetworkManager &network;
-    GateControl &gate;
-    LEDControl &led;
+    Gate &gate;
+    LED &led;
     UI &ui;
     ESPNow &espNow;
 
     void handleTelegramAudioCommand(const Event &event);
 
-    void handleWebSocketConnected(const Event &event);
-
     void handleAudioDataReceived(const Event &event);
-
-    void handleAudioChunkRead(const Event &event);
 
     void handleFingerprintMatch(const Event &event);
 
-    void handleFingerprintNoMatch(const Event &event);
-
     void handleChangeState(const Event &event);
-
-    void handleChangeStateSuccess(const Event &event);
-
-    void handleResidentAuthorized(const Event &event);
-
-    void handleAccessGranted(const Event &event);
-
-    void handleAccessDenied(const Event &event);
-
-    void handleMotionDetected(const Event &event);
-
-    void handleESPAudioCommand(const Event &event);
 
     void handlePasswordValid(const Event &event);
 
-    void handlePasswordInvalid(const Event &event);
+    void handleChangeStateSuccess(const Event &event);
 
-    void handlePersonDetected(const Event &event);
+    void handleESPAudioCommand(const Event &event);
 
-    void handleVisitorEntered(const Event &event);
+    void handleAudioDataReady(const Event &event);
+
+    void handleWebSocketConnected();
+
+    void handleFingerprintNoMatch();
+
+    void handleResidentAuthorized();
+
+    void handleAccessGranted();
+
+    void handleAccessDenied();
+
+    void handleMotionDetected();
+
+    void handlePasswordInvalid();
+
+    void handlePersonDetected();
+
+    void handleRecordingSent();
+
+    void handleBreakBeamTriggered();
+
+    void handleGateFullyClosed();
 };
 
 #endif // EVENT_HANDLER_H
+
 
 ###################################################
 
@@ -323,17 +340,24 @@ private:
 
 #################################################
 
-############# include\gate_control.h #############
+############# include\gate.h #############
 
-#ifndef GATE_CONTROL_H
-#define GATE_CONTROL_H
+#ifndef GATE_H
+#define GATE_H
 
 #include <Arduino.h>
 #include "events.h"
 
-class GateControl {
+enum GateState {
+    G_CLOSED,
+    G_OPENING,
+    G_OPEN,
+    G_CLOSING
+};
+
+class Gate {
 public:
-    GateControl();
+    Gate();
 
     void begin(EventDispatcher &dispatcher);
 
@@ -341,31 +365,36 @@ public:
 
     void closeGate();
 
-    bool isGateMoving() const;
-
-    static bool getIsGateOpen();
-
 private:
-    static void gateControlTask(void *parameter);
+    static void gateTask(void *parameter);
 
-    int motorPin1{};
-    int motorPin2{};
-    int enablePin{};
+    void stopGate() const;
 
-    unsigned long movementStartTime = 0;
-    bool isMoving = false;
-    static volatile bool isGateOpen;
+    void resumeClosing() const;
+
+    void gateFullyClosed();
+
+    int motorPin1;
+    int motorPin2;
+    int enablePin;
+    int breakBeamPin;
+    int reedSwitchPin;
+    GateState currentState;
+    unsigned long stateStartTime;
+
+    // Debounce variables
+    unsigned long lastBreakBeamDebounceTime;
+    unsigned long lastReedSwitchDebounceTime;
+    int lastBreakBeamState;
+    int lastReedSwitchState;
 
     static EventDispatcher *eventDispatcher;
-
-    // Use a mutex to protect isGateOpen
-    static SemaphoreHandle_t gateStateMutex;
+    static const unsigned long DEBOUNCE_DELAY = 50; // 50ms debounce time
 };
 
-#endif // GATE_CONTROL_H
+#endif // GATE_H
 
-
-##################################################
+##########################################
 
 ############# include\icons.h #############
 
@@ -430,17 +459,17 @@ static const unsigned char image_FaceNormal_bits[]
 
 ###########################################
 
-############# include\led_control.h #############
+############# include\led.h #############
 
-#ifndef LED_CONTROL_H
-#define LED_CONTROL_H
+#ifndef LED_H
+#define LED_H
 
 #include <Arduino.h>
 #include "events.h"
 
-class LEDControl {
+class LED {
 public:
-    LEDControl();
+    LED();
 
     void begin(EventDispatcher &dispatcher);
 
@@ -453,9 +482,10 @@ private:
     static EventDispatcher *eventDispatcher;
 };
 
-#endif // LED_CONTROL_H
+#endif // LED_H
 
-#################################################
+
+#########################################
 
 ############# include\logger.h #############
 
@@ -509,6 +539,8 @@ public:
 
     static void sendEvent(const char *eventType, const JsonObject &data);
 
+    [[noreturn]] static void reconnectTask(void *pvParameters);
+
 private:
     static void webSocketEvent(WStype_t type, uint8_t *payload, size_t length);
 
@@ -519,9 +551,10 @@ private:
 
 #endif // WIFI_H
 
+
 #####################################################
 
-############# include\sensors.h #############
+############# include\pir.h #############
 
 #ifndef SENSORS_H
 #define SENSORS_H
@@ -544,26 +577,9 @@ private:
     static EventDispatcher *eventDispatcher;
     unsigned long lastDebounceTime;
 };
-
-class BreakBeamSensor {
-public:
-    BreakBeamSensor();
-
-    void begin(EventDispatcher &dispatcher);
-
-private:
-    static void breakBeamTask(void *parameter);
-
-    int pin;
-    unsigned long lastDebounceTime;
-    int lastState;
-    int state;
-    static EventDispatcher *eventDispatcher;
-};
-
 #endif // SENSORS_H
 
-#############################################
+#########################################
 
 ############# include\ui.h #############
 
@@ -592,6 +608,7 @@ enum class UIState {
     PASSWORD_INCORRECT,
     SAY_CHEESE,
     WELCOME,
+    NO_AUDIO_DATA
 };
 
 class UI {
@@ -644,7 +661,6 @@ private:
 
 #include "audio.h"
 #include "config.h"
-#include "network_manager.h"
 #include "logger.h"
 
 static const char *TAG = "AUDIO";
@@ -729,16 +745,20 @@ void Audio::startRecording() {
 }
 
 void Audio::stopRecording() {
-    LOG_I(TAG, "Stop recording called. Recorded %d bytes", audioBufferIndex);
+    LOG_I(TAG, "Recording stopped. Recorded %d bytes", audioBufferIndex);
     isRecording = false;
     vTaskDelay(pdMS_TO_TICKS(100)); // Wait for last audio chunk to be read
     sendAudioData();
 }
 
 void Audio::startPlayback() {
-    isPlaying = true;
-    audioBufferIndex = 0;
-    LOG_I(TAG, "Playback started");
+    if (audioBufferIndex > 0) {
+        isPlaying = true;
+        LOG_I(TAG, "Playback started with %d bytes", audioBufferIndex);
+    } else {
+        LOG_W(TAG, "Playback not started. No audio data available.");
+        eventDispatcher->dispatchEvent({NO_AUDIO_DATA, ""});
+    }
 }
 
 void Audio::stopPlayback() {
@@ -756,7 +776,7 @@ void Audio::startPrefetch() {
 
 void Audio::stopPrefetch() {
     isPrefetching = false;
-    LOG_I(TAG, "Prefetching stopped");
+    LOG_I(TAG, "Prefetching stopped. Collected %d bytes", audioBufferIndex);
 }
 
 void Audio::addPrefetchData(const uint8_t *data, size_t length) {
@@ -772,27 +792,26 @@ void Audio::clearAudioBuffer() {
 }
 
 void Audio::sendAudioData() {
-    const size_t chunkSize = 1024; // Send 1KB at a time
+    const size_t chunkSize = 1024 * 8; // Send 8KB at a time
     size_t remainingBytes = audioBufferIndex;
     size_t offset = 0;
 
     while (remainingBytes > 0) {
         size_t bytesToSend = min(chunkSize, remainingBytes);
-        NetworkManager::sendAudioChunk(audioBuffer + offset, bytesToSend);
-
+        eventDispatcher->dispatchEvent({AUDIO_DATA_READY, std::string(reinterpret_cast<char *>(audioBuffer + offset), bytesToSend)});
         remainingBytes -= bytesToSend;
         offset += bytesToSend;
-
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    LOG_I(TAG, "Sent %u bytes of audio data in chunks", audioBufferIndex);
+    LOG_I(TAG, "Dispatched %u bytes of audio data in chunks", audioBufferIndex);
+
+    eventDispatcher->dispatchEvent({RECORDING_SENT, ""});
 }
 
 void Audio::audioTask(void *parameter) {
     size_t bytesRead = 0;
     size_t bytesWritten = 0;
-
     while (true) {
         if (isRecording) {
             if (audioBufferIndex + DMA_BUF_LEN <= audioBufferSize) {
@@ -806,21 +825,23 @@ void Audio::audioTask(void *parameter) {
                 LOG_W(TAG, "Audio buffer full. Stopping recording.");
                 stopRecording();
             }
-        } else if (isPlaying) {
-            if (audioBufferIndex < audioBufferSize) {
-                size_t bytesToWrite = min(DMA_BUF_LEN, audioBufferSize - audioBufferIndex);
-                esp_err_t result = i2s_write(I2S_NUM_1, audioBuffer + audioBufferIndex, bytesToWrite, &bytesWritten, portMAX_DELAY);
-                if (result == ESP_OK) {
-                    audioBufferIndex += bytesWritten;
-                } else {
-                    LOG_E(TAG, "Error writing to I2S: %d", result);
-                }
+        } else if (isPlaying && audioBufferIndex > 0) {
+            size_t bytesToWrite = min(DMA_BUF_LEN, audioBufferIndex);
+            esp_err_t result = i2s_write(I2S_NUM_1, audioBuffer, bytesToWrite, &bytesWritten, portMAX_DELAY);
+
+            if (result == ESP_OK) {
+                // Shift the remaining audio data to the beginning of the buffer
+                memmove(audioBuffer, audioBuffer + bytesWritten, audioBufferIndex - bytesWritten);
+                audioBufferIndex -= bytesWritten;
             } else {
+                LOG_E(TAG, "Error writing to I2S: %d", result);
+            }
+            if (audioBufferIndex == 0) {
                 LOG_I(TAG, "Playback completed.");
                 stopPlayback();
             }
-        }
 
+        }
         vTaskDelay(pdMS_TO_TICKS(10)); // Small delay to prevent task from hogging CPU
     }
 }
@@ -935,35 +956,45 @@ void EventDispatcher::dispatchEvent(const Event &event) {
 
 static const char *TAG = "EventHandler";
 
-EventHandler::EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led, UI &ui, ESPNow &espNow)
+EventHandler::EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow)
         : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
+    // Audio Commands
     dispatcher.registerCallback(CMD_TG_AUDIO, [this](const Event &e) { handleTelegramAudioCommand(e); });
     dispatcher.registerCallback(CMD_ESP_AUDIO, [this](const Event &e) { handleESPAudioCommand(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
+    dispatcher.registerCallback(AUDIO_DATA_READY, [this](const Event &e) { handleAudioDataReady(e); });
 
-    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(e); });
+    // WebSocket Events
+    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(); });
 
+    // Authentication Events
     dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleFingerprintMatch(e); });
-    dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(e); });
+    dispatcher.registerCallback(FINGERPRINT_NO_MATCH, [this](const Event &e) { handleFingerprintNoMatch(); });
+    dispatcher.registerCallback(PASSWORD_VALID, [this](const Event &e) { handlePasswordValid(e); });
+    dispatcher.registerCallback(PASSWORD_INVALID, [this](const Event &e) { handlePasswordInvalid(); });
 
+    // State Change Commands
     dispatcher.registerCallback(CMD_CHANGE_STATE, [this](const Event &e) { handleChangeState(e); });
     dispatcher.registerCallback(GATE_OPENED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(GATE_CLOSED, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_ON, [this](const Event &e) { handleChangeStateSuccess(e); });
     dispatcher.registerCallback(LED_TURNED_OFF, [this](const Event &e) { handleChangeStateSuccess(e); });
 
-    dispatcher.registerCallback(PASSWORD_VALID, [this](const Event &e) { handlePasswordValid(e); });
-    dispatcher.registerCallback(PASSWORD_INVALID, [this](const Event &e) { handlePasswordInvalid(e); });
+    // Access Control
+    dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleAccessGranted(); });
+    dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleAccessDenied(); });
 
-    dispatcher.registerCallback(CMD_GRANT_ACCESS, [this](const Event &e) { handleAccessGranted(e); });
-    dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleAccessDenied(e); });
+    // Detection Events
+    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(); });
+    dispatcher.registerCallback(PERSON_DETECTED, [this](const Event &e) { handlePersonDetected(); });
 
-    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
-    dispatcher.registerCallback(PERSON_DETECTED, [this](const Event &e) { handlePersonDetected(e); });
-
-    dispatcher.registerCallback(VISITOR_ENTERED, [this](const Event &e) { handleVisitorEntered(e); });
+    // Miscellaneous Events
+    dispatcher.registerCallback(RECORDING_SENT, [this](const Event &e) { handleRecordingSent(); });
+    dispatcher.registerCallback(BREAK_BEAM_TRIGGERED, [this](const Event &e) { handleBreakBeamTriggered(); });
+    dispatcher.registerCallback(GATE_CLOSED, [this](const Event &e) { handleGateFullyClosed(); });
+    dispatcher.registerCallback(NO_AUDIO_DATA, [this](const Event &e) { ui.setStateFor(3, UIState::NO_AUDIO_DATA); });
 }
 
 
@@ -972,22 +1003,22 @@ void EventHandler::handleTelegramAudioCommand(const Event &event) {
     StaticJsonDocument<200> data;
 
     if (action == "start_recording") {
-        Audio::startRecording();
+        audio.startRecording();
         data["action"] = "start_recording";
     } else if (action == "stop_recording") {
-        Audio::stopRecording();
+        audio.stopRecording();
         data["action"] = "stop_recording";
     } else if (action == "start_playing") {
-        Audio::startPlayback();
+        audio.startPlayback();
         data["action"] = "start_playing";
     } else if (action == "stop_playing") {
-        Audio::stopPlayback();
+        audio.stopPlayback();
         data["action"] = "stop_playing";
     } else if (action == "start_prefetch") {
-        Audio::startPrefetch();
+        audio.startPrefetch();
         data["action"] = "start_prefetch";
     } else if (action == "stop_prefetch") {
-        Audio::stopPrefetch();
+        audio.stopPrefetch();
         data["action"] = "stop_prefetch";
     } else {
         LOG_W(TAG, "Unknown Telegram audio command: %s", action.c_str());
@@ -997,27 +1028,46 @@ void EventHandler::handleTelegramAudioCommand(const Event &event) {
     LOG_I(TAG, "Telegram audio command executed: %s", action.c_str());
 }
 
+void EventHandler::handleRecordingSent() {
+    StaticJsonDocument<200> data;
+    data["event_type"] = "recording_sent";
+    network.sendEvent("recording_sent", data.as<JsonObject>());
+    LOG_I(TAG, "Recording sent event dispatched");
+}
+
+void EventHandler::handleBreakBeamTriggered() {
+    LOG_I(TAG, "Break beam triggered!");
+}
+
+void EventHandler::handleGateFullyClosed() {
+    LOG_I(TAG, "Gate fully closed!");
+}
+
+void EventHandler::handleAudioDataReady(const Event &event) {
+    network.sendAudioChunk(reinterpret_cast<const uint8_t *>(event.data.c_str()), event.dataLength);
+}
+
 void EventHandler::handleESPAudioCommand(const Event &event) {
     std::string action = event.data;
     StaticJsonDocument<200> data;
 
     if (action == "start_recording") {
-        Audio::startRecording();
+        audio.startRecording();
         data["action"] = "start_recording";
     } else if (action == "stop_recording") {
-        Audio::stopRecording();
+        audio.stopRecording();
         data["action"] = "stop_recording";
     } else if (action == "start_playing") {
-        Audio::startPlayback();
+        audio.startPlayback();
         data["action"] = "start_playing";
     } else if (action == "stop_playing") {
-        Audio::stopPlayback();
+        audio.stopPlayback();
         data["action"] = "stop_playing";
     } else if (action == "start_prefetch") {
-        Audio::startPrefetch();
+        audio.startPrefetch();
         data["action"] = "start_prefetch";
     } else if (action == "stop_prefetch") {
-        Audio::stopPrefetch();
+        audio.stopPrefetch();
         data["action"] = "stop_prefetch";
     } else {
         LOG_W(TAG, "Unknown ESP audio command: %s", action.c_str());
@@ -1029,7 +1079,7 @@ void EventHandler::handleESPAudioCommand(const Event &event) {
 }
 
 
-void EventHandler::handleWebSocketConnected(const Event &event) {
+void EventHandler::handleWebSocketConnected() {
     network.sendInitMessage();
 }
 
@@ -1041,21 +1091,21 @@ void EventHandler::handleAudioDataReceived(const Event &event) {
 
 void EventHandler::handleFingerprintMatch(const Event &event) {
     ui.setStateFor(2, UIState::FINGERPRINT_MATCHED);
-    handleResidentAuthorized(event);
+    handleResidentAuthorized();
     LOG_I(TAG, "Fingerprint match found!");
 }
 
-void EventHandler::handleFingerprintNoMatch(const Event &event) {
+void EventHandler::handleFingerprintNoMatch() {
     ui.setStateFor(2, UIState::FINGERPRINT_NO_MATCH);
     LOG_I(TAG, "Fingerprint no match found!");
 }
 
 void EventHandler::handlePasswordValid(const Event &event) {
-    handleResidentAuthorized(event);
+    handleResidentAuthorized();
     LOG_I(TAG, "Password correct!");
 }
 
-void EventHandler::handlePasswordInvalid(const Event &event) {
+void EventHandler::handlePasswordInvalid() {
     LOG_I(TAG, "Password incorrect!");
 }
 
@@ -1089,35 +1139,35 @@ void EventHandler::handleChangeStateSuccess(const Event &event) {
     network.sendEvent("change_state", data.as<JsonObject>());
 }
 
-void EventHandler::handleResidentAuthorized(const Event &event) {
+void EventHandler::handleResidentAuthorized() {
     gate.openGate();
     LOG_I(TAG, "Resident authorized!");
 }
 
-void EventHandler::handleAccessGranted(const Event &event) {
+void EventHandler::handleAccessGranted() {
     ui.setState(UIState::ACCESS_GRANTED);
     gate.openGate();
     LOG_I(TAG, "Access granted!");
 }
 
-void EventHandler::handleAccessDenied(const Event &event) {
+void EventHandler::handleAccessDenied() {
     ui.setState(UIState::ACCESS_DENIED);
     LOG_I(TAG, "Access denied!");
 }
 
-void EventHandler::handleMotionDetected(const Event &event) {
+void EventHandler::handleMotionDetected() {
     ui.setStateFor(2, UIState::MOTION_DETECTED);
     espNow.sendCommand("capture_image");
     network.sendEvent("motion_detected", JsonObject());
     LOG_I(TAG, "Motion detected and visitor identification initiated!");
 }
 
-void EventHandler::handlePersonDetected(const Event &event) {
+void EventHandler::handlePersonDetected() {
     network.sendEvent("person_detected", JsonObject());
     LOG_I(TAG, "Person detected!");
 }
 
-void EventHandler::handleVisitorEntered(const Event &event) {
+void EventHandler::handleVisitorEntered() {
     LOG_I(TAG, "Visitor entered!");
     vTaskDelay(pdMS_TO_TICKS(5000)); // Wait for 5 seconds before closing the gate
     gate.closeGate();
@@ -1195,138 +1245,182 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 
 ###############################################
 
-############# src\gate_control.cpp #############
+############# src\gate.cpp #############
 
-#include "gate_control.h"
-#include "logger.h"
+#include "gate.h"
 #include "config.h"
+#include "logger.h"
 
-static const char *TAG = "GATE_CONTROL";
+static const char *TAG = "GATE";
 
-EventDispatcher *GateControl::eventDispatcher = nullptr;
-volatile bool GateControl::isGateOpen = false;
-SemaphoreHandle_t GateControl::gateStateMutex = xSemaphoreCreateMutex();
+EventDispatcher *Gate::eventDispatcher = nullptr;
 
-GateControl::GateControl() {
-    motorPin1 = MOTOR_PIN1;
-    motorPin2 = MOTOR_PIN2;
-    enablePin = MOTOR_ENABLE;
-};
+Gate::Gate()
+        : motorPin1(MOTOR_PIN1),
+          motorPin2(MOTOR_PIN2),
+          enablePin(MOTOR_ENABLE),
+          breakBeamPin(BREAK_BEAM_PIN),
+          reedSwitchPin(REED_SWITCH_PIN),
+          currentState(G_CLOSED),
+          stateStartTime(0),
+          lastBreakBeamDebounceTime(0),
+          lastReedSwitchDebounceTime(0),
+          lastBreakBeamState(HIGH),
+          lastReedSwitchState(HIGH) {}
 
-void GateControl::begin(EventDispatcher &dispatcher) {
+void Gate::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-
     pinMode(motorPin1, OUTPUT);
     pinMode(motorPin2, OUTPUT);
     pinMode(enablePin, OUTPUT);
+    pinMode(breakBeamPin, INPUT_PULLUP);
+    pinMode(reedSwitchPin, INPUT_PULLUP);
 
-    xTaskCreate(gateControlTask, "Gate Control Task", 4096, this, 1, nullptr);
+    ledcSetup(GATE_PWM_CHANNEL, GATE_PWM_FREQ, GATE_PWM_RESOLUTION);
+    ledcAttachPin(enablePin, GATE_PWM_CHANNEL);
 
-    LOG_I(TAG, "Gate control initialized");
+    xTaskCreate(gateTask, "Gate Task", 4096, this, 1, nullptr);
+    LOG_I(TAG, "Gate control system initialized");
 }
 
-void GateControl::openGate() {
-    if (xSemaphoreTake(gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        if (!isGateOpen && !isMoving) {
-            digitalWrite(motorPin1, HIGH);
-            digitalWrite(motorPin2, LOW);
-            digitalWrite(enablePin, HIGH);
-            movementStartTime = millis();
-            isMoving = true;
-            LOG_I(TAG, "Gate opening started...");
-        } else {
-            LOG_I(TAG, "Gate is already open or in motion.");
-        }
-        xSemaphoreGive(gateStateMutex);
-    }
-}
-
-void GateControl::closeGate() {
-    if (xSemaphoreTake(gateStateMutex, portMAX_DELAY) == pdTRUE) {
-        if (isGateOpen && !isMoving) {
-            digitalWrite(motorPin1, LOW);
-            digitalWrite(motorPin2, HIGH);
-            digitalWrite(enablePin, HIGH);
-            movementStartTime = millis();
-            isMoving = true;
-            LOG_I(TAG, "Gate closing started...");
-        } else {
-            LOG_I(TAG, "Gate is already closed or in motion.");
-        }
-        xSemaphoreGive(gateStateMutex);
-    }
-}
-
-bool GateControl::isGateMoving() const {
-    return isMoving;
-}
-
-
-void GateControl::gateControlTask(void *parameter) {
-    auto *gateControl = static_cast<GateControl *>(parameter);
-
+void Gate::gateTask(void *parameter) {
+    auto *gate = static_cast<Gate *>(parameter);
     while (true) {
-        if (gateControl->isGateMoving() && millis() - gateControl->movementStartTime > 7000) {
-            digitalWrite(gateControl->enablePin, LOW);
-            gateControl->isMoving = false;
+        switch (gate->currentState) {
+            case G_CLOSED:
+                // Wait for openGate() to be called
+                break;
+            case G_OPENING:
+                if (millis() - gate->stateStartTime >= GATE_OPERATION_TIME) {
+                    gate->stopGate();
+                    gate->currentState = G_OPEN;
+                    gate->stateStartTime = millis();
+                    eventDispatcher->dispatchEvent({GATE_OPENED, ""});
+                }
+                break;
+            case G_OPEN:
+                if (millis() - gate->stateStartTime >= GATE_WAIT_TIME) {
+                    gate->closeGate();
+                }
+                break;
+            case G_CLOSING:
+                // Debounce break beam sensor
+                int breakBeamReading = digitalRead(gate->breakBeamPin);
+                if (breakBeamReading != gate->lastBreakBeamState) {
+                    gate->lastBreakBeamDebounceTime = millis();
+                }
 
-            // Update isGateOpen within the mutex
-            if (xSemaphoreTake(gateStateMutex, portMAX_DELAY) == pdTRUE) {
-                isGateOpen = !isGateOpen; // Toggle the state
-                xSemaphoreGive(gateStateMutex);
-            }
+                if ((millis() - gate->lastBreakBeamDebounceTime) > DEBOUNCE_DELAY) {
+                    if (breakBeamReading != gate->lastBreakBeamState) {
+                        gate->lastBreakBeamState = breakBeamReading;
+                        if (gate->lastBreakBeamState == LOW) {
+                            gate->stopGate();
+                            while (digitalRead(gate->breakBeamPin) == LOW) {
+                                vTaskDelay(pdMS_TO_TICKS(100)); // Wait for obstacle to clear
+                            }
+                            gate->resumeClosing();
+                        }
+                    }
+                }
 
-            // Dispatch events after updating isGateOpen
-            if (isGateOpen) {
-                eventDispatcher->dispatchEvent({GATE_OPENED, ""});
-            } else {
-                eventDispatcher->dispatchEvent({GATE_CLOSED, ""});
-            }
+                // Debounce reed switch
+                int reedSwitchReading = digitalRead(gate->reedSwitchPin);
+                if (reedSwitchReading != gate->lastReedSwitchState) {
+                    gate->lastReedSwitchDebounceTime = millis();
+                }
+
+                if ((millis() - gate->lastReedSwitchDebounceTime) > DEBOUNCE_DELAY) {
+                    if (reedSwitchReading != gate->lastReedSwitchState) {
+                        gate->lastReedSwitchState = reedSwitchReading;
+                        if (gate->lastReedSwitchState == LOW) {
+                            gate->gateFullyClosed();
+                        }
+                    }
+                }
+                break;
         }
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(10)); // Small delay to prevent task from hogging CPU
     }
 }
 
-bool GateControl::getIsGateOpen() {
-    return isGateOpen;
+void Gate::openGate() {
+    if (currentState == G_CLOSED) {
+        LOG_I(TAG, "Opening gate");
+        digitalWrite(motorPin1, HIGH);
+        digitalWrite(motorPin2, LOW);
+        ledcWrite(GATE_PWM_CHANNEL, GATE_DUTY_CYCLE);
+        currentState = G_OPENING;
+        stateStartTime = millis();
+    }
 }
 
+void Gate::closeGate() {
+    if (currentState == G_OPEN) {
+        LOG_I(TAG, "Closing gate");
+        digitalWrite(motorPin1, LOW);
+        digitalWrite(motorPin2, HIGH);
+        ledcWrite(GATE_PWM_CHANNEL, GATE_DUTY_CYCLE);
+        currentState = G_CLOSING;
+    }
+}
 
-################################################
+void Gate::stopGate() const {
+    LOG_I(TAG, "Stopping gate");
+    digitalWrite(motorPin1, LOW);
+    digitalWrite(motorPin2, LOW);
+    ledcWrite(GATE_PWM_CHANNEL, 0);
+}
 
-############# src\led_control.cpp #############
+void Gate::resumeClosing() const {
+    LOG_I(TAG, "Resuming gate closure");
+    digitalWrite(motorPin1, LOW);
+    digitalWrite(motorPin2, HIGH);
+    ledcWrite(GATE_PWM_CHANNEL, GATE_DUTY_CYCLE);
+}
 
-#include "led_control.h"
+void Gate::gateFullyClosed() {
+    stopGate();
+    currentState = G_CLOSED;
+    eventDispatcher->dispatchEvent({GATE_CLOSED, ""});
+    LOG_I(TAG, "Gate fully closed");
+}
+
+########################################
+
+############# src\led.cpp #############
+
+#include "led.h"
 #include "logger.h"
 #include "config.h"
 
-static const char *TAG = "LED_CONTROL";
+static const char *TAG = "LED";
 
-EventDispatcher *LEDControl::eventDispatcher = nullptr;
+EventDispatcher *LED::eventDispatcher = nullptr;
 
-LEDControl::LEDControl() { pin = LED_STRIP_PIN; };
+LED::LED() : pin(LED_STRIP_PIN) {}
 
-void LEDControl::begin(EventDispatcher &dispatcher) {
+void LED::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
 
     pinMode(pin, OUTPUT);
-    digitalWrite(pin, LOW);
-    LOG_I(TAG, "LED control initialized");
+    digitalWrite(pin, HIGH);
+    LOG_I(TAG, "LED initialized");
 }
 
-void LEDControl::turnOn() {
-    digitalWrite(pin, HIGH);
+void LED::turnOn() {
+    digitalWrite(pin, LOW);
     LOG_I(TAG, "LED turned on");
     eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
 }
 
-void LEDControl::turnOff() {
-    digitalWrite(pin, LOW);
+void LED::turnOff() {
+    digitalWrite(pin, HIGH);
     LOG_I(TAG, "LED turned off");
     eventDispatcher->dispatchEvent({LED_TURNED_OFF, ""});
 }
 
-###############################################
+
+#######################################
 
 ############# src\logger.cpp #############
 
@@ -1367,9 +1461,9 @@ void logger(LogLevel level, const char *tag, const char *format, ...) {
 #include "fingerprint.h"
 #include "logger.h"
 #include "esp_now_manager.h"
-#include "gate_control.h"
-#include "sensors.h"
-#include "led_control.h"
+#include "gate.h"
+#include "pir.h"
+#include "led.h"
 #include "config.h"
 #include "event_handler.h"
 
@@ -1381,13 +1475,12 @@ NetworkManager wifiHandler;
 UI ui;
 HardwareSerial fingerprintSerial(1);
 FingerprintHandler fingerprintHandler(fingerprintSerial);
-GateControl gateControl;
 PIRSensor pirSensor;
-BreakBeamSensor breakBeamSensor;
-LEDControl ledControl;
+Gate gate;
+LED led;
 Audio audio;
 ESPNow espNow;
-EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl, ui, espNow);
+EventHandler eventHandler(audio, wifiHandler, gate, led, ui, espNow);
 
 void setup() {
     eventHandler.registerCallbacks(eventDispatcher);
@@ -1397,10 +1490,8 @@ void setup() {
     ui.begin(eventDispatcher);
     audio.begin(eventDispatcher);
     fingerprintHandler.begin(eventDispatcher);
-    gateControl.begin(eventDispatcher);
     pirSensor.begin(eventDispatcher);
-    breakBeamSensor.begin(eventDispatcher);
-    ledControl.begin(eventDispatcher);
+    led.begin(eventDispatcher);
     espNow.begin(eventDispatcher);
 
     LOG_I(TAG, "System initialization complete");
@@ -1431,8 +1522,8 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     int connectionAttempts = 0;
 
-    while (WiFiClass::status() != WL_CONNECTED && connectionAttempts < 10) {
-        delay(500);
+    while (WiFiClass::status() != WL_CONNECTED && connectionAttempts < 3) {
+        vTaskDelay(pdMS_TO_TICKS(500));
         connectionAttempts++;
     }
 
@@ -1440,13 +1531,37 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
         LOG_I(TAG, "Connected to WiFi network");
     } else {
         LOG_E(TAG, "Failed to connect to WiFi network");
-        return;
     }
 
     webSocket.begin(WS_SERVER, WS_PORT);
     webSocket.onEvent(webSocketEvent);
 
+    webSocket.enableHeartbeat(15000, 3000, 2);
+
     xTaskCreate(NetworkManager::loop, "WiFi Task", 8192, this, 2, nullptr);
+    xTaskCreate(NetworkManager::reconnectTask, "WiFi Reconnect Task", 2048, this,
+                1, nullptr);
+}
+
+[[noreturn]] void NetworkManager::reconnectTask(void *pvParameters) {
+    while (true) {
+        LOG_I(TAG, "WiFi status: %d", WiFiClass::status());
+        if (WiFiClass::status() != WL_CONNECTED) {
+            LOG_I(TAG, "Reconnecting to WiFi network...");
+            WiFi.reconnect();
+            int connectionAttempts = 0;
+            while (WiFiClass::status() != WL_CONNECTED && connectionAttempts < 3) {
+                vTaskDelay(pdMS_TO_TICKS(500));
+                connectionAttempts++;
+            }
+            if (WiFiClass::status() == WL_CONNECTED) {
+                LOG_I(TAG, "Reconnected to WiFi network");
+            } else {
+                LOG_E(TAG, "Failed to reconnect to WiFi network");
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(30000)); // Check every 30 seconds
+    }
 }
 
 [[noreturn]] void NetworkManager::loop(void *pvParameters) {
@@ -1511,6 +1626,13 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             eventDispatcher->dispatchEvent(event);
             break;
         }
+        case WStype_PING:
+            LOG_I(TAG, "Received PING");
+            break;
+
+        case WStype_PONG:
+            LOG_I(TAG, "Received PONG");
+            break;
         default:
             LOG_W(TAG, "Unhandled WebSocket event type: %d", type);
             break;
@@ -1551,16 +1673,16 @@ void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
     LOG_I(TAG, "Sent event: %s", eventType);
 }
 
+
 ###################################################
 
-############# src\sensors.cpp #############
+############# src\pir.cpp #############
 
-#include "sensors.h"
+#include "pir.h"
 #include "logger.h"
 #include "config.h"
 
 static const char *TAG_PIR = "PIR_SENSOR";
-static const char *TAG_BREAK_BEAM = "BREAK_BEAM_SENSOR";
 
 EventDispatcher *PIRSensor::eventDispatcher = nullptr;
 
@@ -1592,7 +1714,6 @@ void PIRSensor::pirTask(void *parameter) {
                 pirSensor->state = reading;
 
                 if (pirSensor->state == HIGH && (millis() - lastTriggerTime) > cooldownTime) {
-                    LOG_I(TAG_PIR, "Motion detected");
                     eventDispatcher->dispatchEvent({MOTION_DETECTED, ""});
                     lastTriggerTime = millis();
                 }
@@ -1604,46 +1725,8 @@ void PIRSensor::pirTask(void *parameter) {
     }
 }
 
-EventDispatcher *BreakBeamSensor::eventDispatcher = nullptr;
 
-BreakBeamSensor::BreakBeamSensor() : lastDebounceTime(0), lastState(HIGH), state(HIGH) { pin = BREAK_BEAM_PIN; }
-
-void BreakBeamSensor::begin(EventDispatcher &dispatcher) {
-    eventDispatcher = &dispatcher;
-
-    pinMode(pin, INPUT_PULLUP);
-    xTaskCreate(breakBeamTask, "Break Beam Sensor Task", 2048, this, 1, nullptr);
-    LOG_I(TAG_BREAK_BEAM, "Break beam sensor initialized");
-}
-
-void BreakBeamSensor::breakBeamTask(void *parameter) {
-    auto *breakBeamSensor = static_cast<BreakBeamSensor *>(parameter);
-    const unsigned long debounceDelay = 50;
-
-    while (true) {
-        int reading = digitalRead(breakBeamSensor->pin);
-
-        if (reading != breakBeamSensor->lastState) {
-            breakBeamSensor->lastDebounceTime = millis();
-        }
-
-        if ((millis() - breakBeamSensor->lastDebounceTime) > debounceDelay) {
-            if (reading != breakBeamSensor->state) {
-                breakBeamSensor->state = reading;
-
-                if (breakBeamSensor->state == LOW) {
-                    LOG_I(TAG_BREAK_BEAM, "Break beam triggered");
-                    eventDispatcher->dispatchEvent({VISITOR_ENTERED, ""});
-                }
-            }
-        }
-
-        breakBeamSensor->lastState = reading;
-        vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
-    }
-}
-
-###########################################
+#######################################
 
 ############# src\ui.cpp #############
 
@@ -1955,6 +2038,14 @@ void UI::displayCurrentState() {
             u8g2.drawStr(27, 19, "PASSWORD");
             u8g2.drawFrame(1, 1, 125, 61);
             u8g2.drawXBMP(48, 41, 29, 14, image_FaceNormal_bits);
+            break;
+        case UIState::NO_AUDIO_DATA:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(28, 29, "NO AUDIO");
+            u8g2.drawStr(45, 46, "DATA");
+            u8g2.drawFrame(1, 1, 125, 61);
             break;
         case UIState::PASSWORD_INCORRECT:
             u8g2.setDrawColor(2);

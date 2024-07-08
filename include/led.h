@@ -1,12 +1,12 @@
-#ifndef LED_CONTROL_H
-#define LED_CONTROL_H
+#ifndef LED_H
+#define LED_H
 
 #include <Arduino.h>
 #include "events.h"
 
-class LEDControl {
+class LED {
 public:
-    LEDControl();
+    LED();
 
     void begin(EventDispatcher &dispatcher);
 
@@ -19,4 +19,4 @@ private:
     static EventDispatcher *eventDispatcher;
 };
 
-#endif // LED_CONTROL_H
+#endif // LED_H

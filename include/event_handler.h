@@ -4,23 +4,23 @@
 #include "events.h"
 #include "audio.h"
 #include "network_manager.h"
-#include "gate_control.h"
-#include "led_control.h"
+#include "gate.h"
+#include "led.h"
 #include "ui.h"
 #include "esp_now.h"
 #include "esp_now_manager.h"
 
 class EventHandler {
 public:
-    EventHandler(Audio &audio, NetworkManager &network, GateControl &gate, LEDControl &led, UI &ui, ESPNow &espNow);
+    EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow);
 
     void registerCallbacks(EventDispatcher &dispatcher);
 
 private:
     Audio &audio;
     NetworkManager &network;
-    GateControl &gate;
-    LEDControl &led;
+    Gate &gate;
+    LED &led;
     UI &ui;
     ESPNow &espNow;
 
@@ -56,9 +56,13 @@ private:
 
     void handlePersonDetected();
 
-    void handleVisitorEntered();
-
     void handleRecordingSent();
+
+    void handleBreakBeamTriggered();
+
+    void handleGateFullyClosed();
+
+    void handleVisitorEntered();
 };
 
 #endif // EVENT_HANDLER_H

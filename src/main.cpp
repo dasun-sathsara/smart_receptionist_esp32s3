@@ -6,9 +6,9 @@
 #include "fingerprint.h"
 #include "logger.h"
 #include "esp_now_manager.h"
-#include "gate_control.h"
-#include "sensors.h"
-#include "led_control.h"
+#include "gate.h"
+#include "pir.h"
+#include "led.h"
 #include "config.h"
 #include "event_handler.h"
 
@@ -20,13 +20,12 @@ NetworkManager wifiHandler;
 UI ui;
 HardwareSerial fingerprintSerial(1);
 FingerprintHandler fingerprintHandler(fingerprintSerial);
-GateControl gateControl;
 PIRSensor pirSensor;
-BreakBeamSensor breakBeamSensor;
-LEDControl ledControl;
+Gate gate;
+LED led;
 Audio audio;
 ESPNow espNow;
-EventHandler eventHandler(audio, wifiHandler, gateControl, ledControl, ui, espNow);
+EventHandler eventHandler(audio, wifiHandler, gate, led, ui, espNow);
 
 void setup() {
     eventHandler.registerCallbacks(eventDispatcher);
@@ -36,10 +35,8 @@ void setup() {
     ui.begin(eventDispatcher);
     audio.begin(eventDispatcher);
     fingerprintHandler.begin(eventDispatcher);
-    gateControl.begin(eventDispatcher);
     pirSensor.begin(eventDispatcher);
-    breakBeamSensor.begin(eventDispatcher);
-    ledControl.begin(eventDispatcher);
+    led.begin(eventDispatcher);
     espNow.begin(eventDispatcher);
 
     LOG_I(TAG, "System initialization complete");

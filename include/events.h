@@ -46,7 +46,6 @@ enum Events : EventType {
     AUDIO_DATA_RECEIVED,
     ESPNOW_DATA_RECEIVED,
     MOTION_DETECTED,
-    VISITOR_ENTERED,
     CMD_CHANGE_STATE,
     GATE_OPENED,
     GATE_CLOSED,
@@ -59,7 +58,8 @@ enum Events : EventType {
     CMD_DENY_ACCESS,
     AUDIO_DATA_READY,
     RECORDING_SENT,
-    NO_AUDIO_DATA
+    NO_AUDIO_DATA,
+    VISITOR_ENTERED,
 };
 
 #endif // EVENTS_H
