@@ -9,10 +9,11 @@
 #include "ui.h"
 #include "esp_now.h"
 #include "esp_now_manager.h"
+#include "fingerprint.h"
 
 class EventHandler {
 public:
-    EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow);
+    EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow, FingerprintHandler &fingerprint);
 
     void registerCallbacks(EventDispatcher &dispatcher);
 
@@ -23,6 +24,7 @@ private:
     LED &led;
     UI &ui;
     ESPNow &espNow;
+    FingerprintHandler &fingerprint;
 
     void handleTelegramAudioCommand(const Event &event);
 
@@ -61,6 +63,10 @@ private:
     void handleBreakBeamTriggered();
 
     void handleGateFullyClosed();
+
+    void handleMotionDetected(const Event &event);
+
+    void handleInactivityDetected(const Event &event);
 
     void handleVisitorEntered();
 };

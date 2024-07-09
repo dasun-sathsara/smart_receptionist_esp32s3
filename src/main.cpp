@@ -25,7 +25,7 @@ Gate gate;
 LED led;
 Audio audio;
 ESPNow espNow;
-EventHandler eventHandler(audio, wifiHandler, gate, led, ui, espNow);
+EventHandler eventHandler(audio, wifiHandler, gate, led, ui, espNow, fingerprintHandler);
 
 void setup() {
     eventHandler.registerCallbacks(eventDispatcher);

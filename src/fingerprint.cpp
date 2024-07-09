@@ -33,6 +33,12 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
     auto *handler = static_cast<FingerprintHandler *>(parameter);
 
     while (true) {
+
+        if (!handler->sensorEnabled) {
+            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
+            continue;
+        }
+
         uint8_t p = handler->fingerprint.getImage();
         if (p == FINGERPRINT_OK) {
             LOG_I(TAG, "Image taken");
@@ -59,5 +65,13 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
     }
 }
 
+void FingerprintHandler::enableSensor() {
+    sensorEnabled = true;
+    LOG_I(TAG, "Fingerprint sensor enabled");
+}
 
+void FingerprintHandler::disableSensor() {
+    sensorEnabled = false;
+    LOG_I(TAG, "Fingerprint sensor disabled");
+}
 

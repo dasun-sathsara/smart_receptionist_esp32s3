@@ -38,6 +38,10 @@ public:
 
     void setStateFor(int seconds, UIState newState);
 
+    void enableDisplay();
+
+    void disableDisplay();
+
 private:
     [[noreturn]] static void uiTask(void *parameter);
 
@@ -50,6 +54,7 @@ private:
     void handlePasswordKeyPress(char key);
 
     U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
+    bool displayEnabled;
     Keypad keypad;
     UIState currentState;
     char enteredPassword[5]{};

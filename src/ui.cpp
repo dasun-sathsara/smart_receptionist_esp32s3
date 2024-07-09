@@ -52,7 +52,21 @@ void UI::begin(EventDispatcher &dispatcher) {
     }
 }
 
+void UI::enableDisplay() {
+    displayEnabled = true;
+    u8g2.setPowerSave(0); // Turn on display
+    LOG_I(TAG, "Display enabled");
+}
+
+void UI::disableDisplay() {
+    displayEnabled = false;
+    u8g2.setPowerSave(1); // Turn off display
+    LOG_I(TAG, "Display disabled");
+}
+
 void UI::update() {
+    if (!displayEnabled) return;
+
     char key = keypad.getKey();
     if (key) {
         LOG_I(TAG, "Key pressed: %c", key);

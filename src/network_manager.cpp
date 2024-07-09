@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include "logger.h"
+#include <esp_system.h>
 
 static const char *TAG = "NetworkManager";
 
@@ -38,7 +39,6 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
 
 [[noreturn]] void NetworkManager::reconnectTask(void *pvParameters) {
     while (true) {
-        LOG_I(TAG, "WiFi status: %d", WiFiClass::status());
         if (WiFiClass::status() != WL_CONNECTED) {
             LOG_I(TAG, "Reconnecting to WiFi network...");
             WiFi.reconnect();
@@ -109,6 +109,10 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                 eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, ""});
             } else if (strcmp(event_type, "deny_access") == 0) {
                 eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, ""});
+            } else if (strcmp(event_type, "reset_device") == 0) {
+                LOG_I(TAG, "Received reset command. Restarting ESP32...");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                esp_restart();
             } else {
                 LOG_W(TAG, "Unknown event type: %s", event_type);
             }

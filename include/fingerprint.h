@@ -10,10 +10,15 @@ public:
 
     void begin(EventDispatcher &dispatcher);
 
+    void enableSensor();
+
+    void disableSensor();
+
 private:
     static void fingerprintTask(void *parameter);
 
     HardwareSerial mySerial;
+    bool sensorEnabled;
     Adafruit_Fingerprint fingerprint;
     static EventDispatcher *eventDispatcher;
 };

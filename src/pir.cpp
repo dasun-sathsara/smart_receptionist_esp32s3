@@ -20,7 +20,9 @@ void PIRSensor::pirTask(void *parameter) {
     auto *pirSensor = static_cast<PIRSensor *>(parameter);
     const unsigned long debounceDelay = 50; // 50ms debounce time
     const unsigned long cooldownTime = 60000; // 1 minute cooldown
+    const unsigned long inactivityThreshold = 300000; // 5 minutes of inactivity
     unsigned long lastTriggerTime = 0;
+    unsigned long lastActivityTime = 0;
 
     while (true) {
         int reading = digitalRead(pirSensor->pin);
@@ -38,6 +40,12 @@ void PIRSensor::pirTask(void *parameter) {
                     lastTriggerTime = millis();
                 }
             }
+        }
+
+        // Check for inactivity
+        if ((millis() - lastActivityTime) > inactivityThreshold) {
+            eventDispatcher->dispatchEvent({INACTIVITY_DETECTED, ""});
+            lastActivityTime = millis(); // Reset to avoid continuous events
         }
 
         pirSensor->lastState = reading;

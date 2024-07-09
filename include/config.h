@@ -9,7 +9,7 @@
 #define WIFI_PASSWORD "12345678"
 
 // WebSocket server details
-#define WS_SERVER "35.197.142.113"
+#define WS_SERVER "192.168.63.127"
 #define WS_PORT 8765
 
 // L298N motor driver configuration

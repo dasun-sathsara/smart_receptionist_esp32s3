@@ -5,8 +5,9 @@
 
 static const char *TAG = "EventHandler";
 
-EventHandler::EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow)
-        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
+EventHandler::EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow,
+                           FingerprintHandler &fingerprint)
+        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow), fingerprint(fingerprint) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     // Audio Commands
@@ -45,6 +46,10 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     // Miscellaneous Events
     dispatcher.registerCallback(RECORDING_SENT, [this](const Event &e) { handleRecordingSent(); });
     dispatcher.registerCallback(NO_AUDIO_DATA, [this](const Event &e) { ui.setStateFor(3, UIState::NO_AUDIO_DATA); });
+
+    // Power Saving
+    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
+    dispatcher.registerCallback(INACTIVITY_DETECTED, [this](const Event &e) { handleInactivityDetected(e); });
 }
 
 
@@ -214,4 +219,16 @@ void EventHandler::handleVisitorEntered() {
     StaticJsonDocument<256> data;
     data["event_type"] = "visitor_entered";
     network.sendEvent("visitor_entered", data.as<JsonObject>());
+}
+
+void EventHandler::handleMotionDetected(const Event &event) {
+    ui.enableDisplay();
+    fingerprint.enableSensor();
+    LOG_I(TAG, "Motion detected, components enabled");
+}
+
+void EventHandler::handleInactivityDetected(const Event &event) {
+    ui.disableDisplay();
+    fingerprint.disableSensor();
+    LOG_I(TAG, "Inactivity detected, components disabled");
 }
