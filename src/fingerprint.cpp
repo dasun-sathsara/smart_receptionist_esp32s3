@@ -34,8 +34,19 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 
     while (true) {
 
-        if (!handler->sensorEnabled) {
-            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
+//        if (!handler->sensorEnabled) {
+//            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
+//            continue;
+//        }
+
+        if (handler->isEnrolling) {
+            uint8_t result = handler->getFingerprintEnroll();
+            if (result == FINGERPRINT_OK) {
+                handler->isEnrolling = false;
+            } else {
+                handler->eventDispatcher->dispatchEvent({FINGERPRINT_ENROLL_FAILED, ""});
+                handler->isEnrolling = false;
+            }
             continue;
         }
 
@@ -63,6 +74,147 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
         }
         vTaskDelay(1000);
     }
+}
+
+void FingerprintHandler::startEnrollment(uint8_t id) {
+    isEnrolling = true;
+    enrollId = id;
+    LOG_I(TAG, "Starting fingerprint enrollment for ID %d", id);
+    eventDispatcher->dispatchEvent({PLACE_FINGER, ""});
+}
+
+uint8_t FingerprintHandler::getFingerprintEnroll() {
+    int p = -1;
+    LOG_I(TAG, "Waiting for valid finger to enroll as #%d", enrollId);
+    while (p != FINGERPRINT_OK) {
+        p = fingerprint.getImage();
+        switch (p) {
+            case FINGERPRINT_OK:
+                LOG_I(TAG, "Image taken");
+                break;
+            case FINGERPRINT_NOFINGER:
+                LOG_D(TAG, ".");
+                break;
+            case FINGERPRINT_PACKETRECIEVEERR:
+                LOG_E(TAG, "Communication error");
+                break;
+            case FINGERPRINT_IMAGEFAIL:
+                LOG_E(TAG, "Imaging error");
+                break;
+            default:
+                LOG_E(TAG, "Unknown error");
+                break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    p = fingerprint.image2Tz(1);
+    switch (p) {
+        case FINGERPRINT_OK:
+            LOG_I(TAG, "Image converted");
+            break;
+        case FINGERPRINT_IMAGEMESS:
+            LOG_E(TAG, "Image too messy");
+            return p;
+        case FINGERPRINT_PACKETRECIEVEERR:
+            LOG_E(TAG, "Communication error");
+            return p;
+        case FINGERPRINT_FEATUREFAIL:
+        case FINGERPRINT_INVALIDIMAGE:
+            LOG_E(TAG, "Could not find fingerprint features");
+            return p;
+        default:
+            LOG_E(TAG, "Unknown error");
+            return p;
+    }
+
+    eventDispatcher->dispatchEvent({REMOVE_FINGER, ""});
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    p = 0;
+    while (p != FINGERPRINT_NOFINGER) {
+        p = fingerprint.getImage();
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    p = -1;
+    eventDispatcher->dispatchEvent({PLACE_FINGER_AGAIN, ""});
+    while (p != FINGERPRINT_OK) {
+        p = fingerprint.getImage();
+        switch (p) {
+            case FINGERPRINT_OK:
+                LOG_I(TAG, "Image taken");
+                break;
+            case FINGERPRINT_NOFINGER:
+                LOG_D(TAG, ".");
+                break;
+            case FINGERPRINT_PACKETRECIEVEERR:
+                LOG_E(TAG, "Communication error");
+                break;
+            case FINGERPRINT_IMAGEFAIL:
+                LOG_E(TAG, "Imaging error");
+                break;
+            default:
+                LOG_E(TAG, "Unknown error");
+                break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    p = fingerprint.image2Tz(2);
+    switch (p) {
+        case FINGERPRINT_OK:
+            LOG_I(TAG, "Image converted");
+            break;
+        case FINGERPRINT_IMAGEMESS:
+            LOG_E(TAG, "Image too messy");
+            return p;
+        case FINGERPRINT_PACKETRECIEVEERR:
+            LOG_E(TAG, "Communication error");
+            return p;
+        case FINGERPRINT_FEATUREFAIL:
+        case FINGERPRINT_INVALIDIMAGE:
+            LOG_E(TAG, "Could not find fingerprint features");
+            return p;
+        default:
+            LOG_E(TAG, "Unknown error");
+            return p;
+    }
+
+    LOG_I(TAG, "Creating model for #%d", enrollId);
+    p = fingerprint.createModel();
+    if (p == FINGERPRINT_OK) {
+        LOG_I(TAG, "Prints matched!");
+    } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
+        LOG_E(TAG, "Communication error");
+        return p;
+    } else if (p == FINGERPRINT_ENROLLMISMATCH) {
+        LOG_E(TAG, "Fingerprints did not match");
+        return p;
+    } else {
+        LOG_E(TAG, "Unknown error");
+        return p;
+    }
+
+    p = fingerprint.storeModel(enrollId);
+    if (p == FINGERPRINT_OK) {
+        LOG_I(TAG, "Stored!");
+        eventDispatcher->dispatchEvent({FINGERPRINT_ENROLLED, ""});
+    } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
+        LOG_E(TAG, "Communication error");
+        return p;
+    } else if (p == FINGERPRINT_BADLOCATION) {
+        LOG_E(TAG, "Could not store in that location");
+        return p;
+    } else if (p == FINGERPRINT_FLASHERR) {
+        LOG_E(TAG, "Error writing to flash");
+        return p;
+    } else {
+        LOG_E(TAG, "Unknown error");
+        return p;
+    }
+
+    return FINGERPRINT_OK;
 }
 
 void FingerprintHandler::enableSensor() {

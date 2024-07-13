@@ -65,11 +65,11 @@ private:
 #include "U8g2lib.h"
 
 // WiFi credentials
-#define WIFI_SSID "LG G7"
+#define WIFI_SSID "Xperia 1 II"
 #define WIFI_PASSWORD "12345678"
 
 // WebSocket server details
-#define WS_SERVER "35.197.142.113"
+#define WS_SERVER "192.168.17.218"
 #define WS_PORT 8765
 
 // L298N motor driver configuration
@@ -223,6 +223,7 @@ enum Events : EventType {
     ESPNOW_DATA_RECEIVED,
     MOTION_DETECTED,
     CMD_CHANGE_STATE,
+    INACTIVITY_DETECTED,
     GATE_OPENED,
     GATE_CLOSED,
     LED_TURNED_ON,
@@ -255,10 +256,11 @@ enum Events : EventType {
 #include "ui.h"
 #include "esp_now.h"
 #include "esp_now_manager.h"
+#include "fingerprint.h"
 
 class EventHandler {
 public:
-    EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow);
+    EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow, FingerprintHandler &fingerprint);
 
     void registerCallbacks(EventDispatcher &dispatcher);
 
@@ -269,6 +271,7 @@ private:
     LED &led;
     UI &ui;
     ESPNow &espNow;
+    FingerprintHandler &fingerprint;
 
     void handleTelegramAudioCommand(const Event &event);
 
@@ -308,6 +311,10 @@ private:
 
     void handleGateFullyClosed();
 
+    void handleMotionDetected(const Event &event);
+
+    void handleInactivityDetected(const Event &event);
+
     void handleVisitorEntered();
 };
 
@@ -330,10 +337,15 @@ public:
 
     void begin(EventDispatcher &dispatcher);
 
+    void enableSensor();
+
+    void disableSensor();
+
 private:
     static void fingerprintTask(void *parameter);
 
     HardwareSerial mySerial;
+    bool sensorEnabled;
     Adafruit_Fingerprint fingerprint;
     static EventDispatcher *eventDispatcher;
 };
@@ -489,7 +501,6 @@ private:
 
 #endif // LED_H
 
-
 #########################################
 
 ############# include\logger.h #############
@@ -613,7 +624,12 @@ enum class UIState {
     PASSWORD_INCORRECT,
     SAY_CHEESE,
     WELCOME,
-    NO_AUDIO_DATA
+    NO_AUDIO_DATA,
+    PLACE_FINGER,
+    PLACE_FINGER_AGAIN,
+    REMOVE_FINGER,
+    FINGERPRINT_ENROLLED,
+    FINGERPRINT_ENROLL_FAILED
 };
 
 class UI {
@@ -628,6 +644,10 @@ public:
 
     void setStateFor(int seconds, UIState newState);
 
+    void enableDisplay();
+
+    void disableDisplay();
+
 private:
     [[noreturn]] static void uiTask(void *parameter);
 
@@ -640,6 +660,7 @@ private:
     void handlePasswordKeyPress(char key);
 
     U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2;
+    bool displayEnabled;
     Keypad keypad;
     UIState currentState;
     char enteredPassword[5]{};
@@ -961,8 +982,9 @@ void EventDispatcher::dispatchEvent(const Event &event) {
 
 static const char *TAG = "EventHandler";
 
-EventHandler::EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow)
-        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow) {}
+EventHandler::EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow,
+                           FingerprintHandler &fingerprint)
+        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow), fingerprint(fingerprint) {}
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     // Audio Commands
@@ -1001,6 +1023,10 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     // Miscellaneous Events
     dispatcher.registerCallback(RECORDING_SENT, [this](const Event &e) { handleRecordingSent(); });
     dispatcher.registerCallback(NO_AUDIO_DATA, [this](const Event &e) { ui.setStateFor(3, UIState::NO_AUDIO_DATA); });
+
+    // Power Saving
+    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
+    dispatcher.registerCallback(INACTIVITY_DETECTED, [this](const Event &e) { handleInactivityDetected(e); });
 }
 
 
@@ -1172,6 +1198,17 @@ void EventHandler::handleVisitorEntered() {
     network.sendEvent("visitor_entered", data.as<JsonObject>());
 }
 
+void EventHandler::handleMotionDetected(const Event &event) {
+    ui.enableDisplay();
+    fingerprint.enableSensor();
+    LOG_I(TAG, "Motion detected, components enabled");
+}
+
+void EventHandler::handleInactivityDetected(const Event &event) {
+    ui.disableDisplay();
+    fingerprint.disableSensor();
+    LOG_I(TAG, "Inactivity detected, components disabled");
+}
 
 #################################################
 
@@ -1212,6 +1249,12 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
     auto *handler = static_cast<FingerprintHandler *>(parameter);
 
     while (true) {
+
+        if (!handler->sensorEnabled) {
+            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
+            continue;
+        }
+
         uint8_t p = handler->fingerprint.getImage();
         if (p == FINGERPRINT_OK) {
             LOG_I(TAG, "Image taken");
@@ -1238,7 +1281,15 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
     }
 }
 
+void FingerprintHandler::enableSensor() {
+    sensorEnabled = true;
+    LOG_I(TAG, "Fingerprint sensor enabled");
+}
 
+void FingerprintHandler::disableSensor() {
+    sensorEnabled = false;
+    LOG_I(TAG, "Fingerprint sensor disabled");
+}
 
 
 
@@ -1432,24 +1483,22 @@ LED::LED() : pin(LED_STRIP_PIN) {}
 
 void LED::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-
     pinMode(pin, OUTPUT);
-    digitalWrite(pin, HIGH);
-    LOG_I(TAG, "LED initialized");
+    digitalWrite(pin, HIGH);  // Initialize the relay in OFF state
+    LOG_I(TAG, "LED (Relay) initialized");
 }
 
 void LED::turnOn() {
-    digitalWrite(pin, LOW);
-    LOG_I(TAG, "LED turned on");
+    digitalWrite(pin, LOW);  // Trigger the relay LOW to turn ON
+    LOG_I(TAG, "LED (Relay) turned on");
     eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
 }
 
 void LED::turnOff() {
-    digitalWrite(pin, HIGH);
-    LOG_I(TAG, "LED turned off");
+    digitalWrite(pin, HIGH);  // Set the relay HIGH to turn OFF
+    LOG_I(TAG, "LED (Relay) turned off");
     eventDispatcher->dispatchEvent({LED_TURNED_OFF, ""});
 }
-
 
 #######################################
 
@@ -1497,7 +1546,8 @@ void logger(LogLevel level, const char *tag, const char *format, ...) {
 #include "led.h"
 #include "config.h"
 #include "event_handler.h"
-
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 static const char *TAG = "MAIN";
 
@@ -1511,13 +1561,27 @@ Gate gate;
 LED led;
 Audio audio;
 ESPNow espNow;
-EventHandler eventHandler(audio, wifiHandler, gate, led, ui, espNow);
+EventHandler eventHandler(audio, wifiHandler, gate, led, ui, espNow, fingerprintHandler);
 
 void setup() {
-    eventHandler.registerCallbacks(eventDispatcher);
     Serial.begin(115200);
 
+    // Disable brownout detector
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+    LOG_I(TAG, "Brownout detector disabled");
+
+    // Check PSRAM
+    if (psramFound()) {
+        size_t psramSize = ESP.getPsramSize();
+        LOG_I(TAG, "PSRAM is available. Capacity: %d bytes", psramSize);
+    } else {
+        LOG_E(TAG, "PSRAM is not available or not working!");
+    }
+
+    eventHandler.registerCallbacks(eventDispatcher);
+
     wifiHandler.begin(eventDispatcher);
+    gate.begin(eventDispatcher);
     ui.begin(eventDispatcher);
     audio.begin(eventDispatcher);
     fingerprintHandler.begin(eventDispatcher);
@@ -1529,8 +1593,8 @@ void setup() {
 }
 
 void loop() {
+    // The main loop is empty because tasks are handled by FreeRTOS
 }
-
 
 ########################################
 
@@ -1542,6 +1606,7 @@ void loop() {
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include "logger.h"
+#include <esp_system.h>
 
 static const char *TAG = "NetworkManager";
 
@@ -1576,7 +1641,6 @@ void NetworkManager::begin(EventDispatcher &dispatcher) {
 
 [[noreturn]] void NetworkManager::reconnectTask(void *pvParameters) {
     while (true) {
-        LOG_I(TAG, "WiFi status: %d", WiFiClass::status());
         if (WiFiClass::status() != WL_CONNECTED) {
             LOG_I(TAG, "Reconnecting to WiFi network...");
             WiFi.reconnect();
@@ -1647,6 +1711,10 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                 eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, ""});
             } else if (strcmp(event_type, "deny_access") == 0) {
                 eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, ""});
+            } else if (strcmp(event_type, "reset_device") == 0) {
+                LOG_I(TAG, "Received reset command. Restarting ESP32...");
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                esp_restart();
             } else {
                 LOG_W(TAG, "Unknown event type: %s", event_type);
             }
@@ -1731,7 +1799,9 @@ void PIRSensor::pirTask(void *parameter) {
     auto *pirSensor = static_cast<PIRSensor *>(parameter);
     const unsigned long debounceDelay = 50; // 50ms debounce time
     const unsigned long cooldownTime = 60000; // 1 minute cooldown
+    const unsigned long inactivityThreshold = 300000; // 5 minutes of inactivity
     unsigned long lastTriggerTime = 0;
+    unsigned long lastActivityTime = 0;
 
     while (true) {
         int reading = digitalRead(pirSensor->pin);
@@ -1749,6 +1819,12 @@ void PIRSensor::pirTask(void *parameter) {
                     lastTriggerTime = millis();
                 }
             }
+        }
+
+        // Check for inactivity
+        if ((millis() - lastActivityTime) > inactivityThreshold) {
+            eventDispatcher->dispatchEvent({INACTIVITY_DETECTED, ""});
+            lastActivityTime = millis(); // Reset to avoid continuous events
         }
 
         pirSensor->lastState = reading;
@@ -1815,7 +1891,21 @@ void UI::begin(EventDispatcher &dispatcher) {
     }
 }
 
+void UI::enableDisplay() {
+    displayEnabled = true;
+    u8g2.setPowerSave(0); // Turn on display
+    LOG_I(TAG, "Display enabled");
+}
+
+void UI::disableDisplay() {
+    displayEnabled = false;
+    u8g2.setPowerSave(1); // Turn off display
+    LOG_I(TAG, "Display disabled");
+}
+
 void UI::update() {
+    if (!displayEnabled) return;
+
     char key = keypad.getKey();
     if (key) {
         LOG_I(TAG, "Key pressed: %c", key);
@@ -2106,6 +2196,47 @@ void UI::displayCurrentState() {
             u8g2.drawEllipse(63, 49, 2, 2);
             u8g2.drawEllipse(55, 49, 2, 2);
             u8g2.drawEllipse(71, 49, 2, 2);
+            break;
+        case UIState::PLACE_FINGER:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(20, 28, "PLACE YOUR");
+            u8g2.drawStr(35, 44, "FINGER");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::PLACE_FINGER_AGAIN:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(18, 29, "PLACE YOUR");
+            u8g2.drawStr(10, 46, "FINGER AGAIN");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::REMOVE_FINGER:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(15, 28, "REMOVE YOUR");
+            u8g2.drawStr(36, 46, "FINGER");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::FINGERPRINT_ENROLLED:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(14, 28, "FINGERPRINT");
+            u8g2.drawStr(22, 45, "ENROLLED!");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::FINGERPRINT_ENROLL_FAILED:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(14, 19, "FINGERPRINT");
+            u8g2.drawStr(17, 36, "ENROLLMENT");
+            u8g2.drawStr(37, 53, "FAILED");
+            u8g2.drawFrame(1, 1, 125, 61);
             break;
     }
     u8g2.sendBuffer();

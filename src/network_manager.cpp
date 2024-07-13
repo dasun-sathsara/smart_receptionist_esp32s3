@@ -113,6 +113,15 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                 LOG_I(TAG, "Received reset command. Restarting ESP32...");
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 esp_restart();
+            } else if (strcmp(event_type, "enroll_fingerprint") == 0) {
+                JsonObject data = doc["data"];
+                if (!data.isNull()) {
+                    String dataString;
+                    serializeJson(data, dataString);
+                    eventDispatcher->dispatchEvent({CMD_ENROLL_FINGERPRINT, dataString.c_str()});
+                } else {
+                    LOG_E(TAG, "Invalid enroll_fingerprint event: missing data");
+                }
             } else {
                 LOG_W(TAG, "Unknown event type: %s", event_type);
             }

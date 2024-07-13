@@ -64,11 +64,24 @@ private:
 
     void handleGateFullyClosed();
 
+    void handleFingerprintEnroll(const Event &event);
+
     void handleMotionDetected(const Event &event);
 
     void handleInactivityDetected(const Event &event);
 
     void handleVisitorEntered();
+
+
+    void handlePlaceFinger(const Event &event);
+
+    void handlePlaceFingerAgain(const Event &event);
+
+    void handleRemoveFinger(const Event &event);
+
+    void handleFingerprintEnrolled(const Event &event);
+
+    void handleFingerprintEnrollFailed(const Event &event);
 };
 
 #endif // EVENT_HANDLER_H

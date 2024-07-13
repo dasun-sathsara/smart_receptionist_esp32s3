@@ -14,10 +14,17 @@ public:
 
     void disableSensor();
 
+    void startEnrollment(uint8_t id);
+
 private:
     static void fingerprintTask(void *parameter);
 
+    uint8_t getFingerprintEnroll();
+
+
     HardwareSerial mySerial;
+    bool isEnrolling = false;
+    uint8_t enrollId = 0;
     bool sensorEnabled;
     Adafruit_Fingerprint fingerprint;
     static EventDispatcher *eventDispatcher;

@@ -65,7 +65,7 @@ void UI::disableDisplay() {
 }
 
 void UI::update() {
-    if (!displayEnabled) return;
+//    if (!displayEnabled) return;
 
     char key = keypad.getKey();
     if (key) {
@@ -357,6 +357,56 @@ void UI::displayCurrentState() {
             u8g2.drawEllipse(63, 49, 2, 2);
             u8g2.drawEllipse(55, 49, 2, 2);
             u8g2.drawEllipse(71, 49, 2, 2);
+            break;
+        case UIState::PLACE_FINGER:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(20, 28, "PLACE YOUR");
+            u8g2.drawStr(35, 44, "FINGER");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::PLACE_FINGER_AGAIN:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(18, 29, "PLACE YOUR");
+            u8g2.drawStr(10, 46, "FINGER AGAIN");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::REMOVE_FINGER:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(15, 28, "REMOVE YOUR");
+            u8g2.drawStr(36, 46, "FINGER");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::FINGERPRINT_ENROLLED:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(14, 28, "FINGERPRINT");
+            u8g2.drawStr(22, 45, "ENROLLED!");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::FINGERPRINT_ENROLL_FAILED:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(14, 19, "FINGERPRINT");
+            u8g2.drawStr(17, 36, "ENROLLMENT");
+            u8g2.drawStr(37, 53, "FAILED");
+            u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::AUDIO_MESSAGE_RECEIVED:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(40, 19, "AUDIO");
+            u8g2.drawStr(32, 37, "MESSAGE");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawStr(27, 55, "RECEIVED");
             break;
     }
     u8g2.sendBuffer();

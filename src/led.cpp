@@ -10,20 +10,19 @@ LED::LED() : pin(LED_STRIP_PIN) {}
 
 void LED::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-
     pinMode(pin, OUTPUT);
-    digitalWrite(pin, HIGH);
-    LOG_I(TAG, "LED initialized");
+    digitalWrite(pin, HIGH);  // Initialize the relay in OFF state
+    LOG_I(TAG, "LED (Relay) initialized");
 }
 
 void LED::turnOn() {
-    digitalWrite(pin, LOW);
-    LOG_I(TAG, "LED turned on");
+    digitalWrite(pin, LOW);  // Trigger the relay LOW to turn ON
+    LOG_I(TAG, "LED (Relay) turned on");
     eventDispatcher->dispatchEvent({LED_TURNED_ON, ""});
 }
 
 void LED::turnOff() {
-    digitalWrite(pin, HIGH);
-    LOG_I(TAG, "LED turned off");
+    digitalWrite(pin, HIGH);  // Set the relay HIGH to turn OFF
+    LOG_I(TAG, "LED (Relay) turned off");
     eventDispatcher->dispatchEvent({LED_TURNED_OFF, ""});
 }

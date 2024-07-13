@@ -50,8 +50,39 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     // Power Saving
     dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
     dispatcher.registerCallback(INACTIVITY_DETECTED, [this](const Event &e) { handleInactivityDetected(e); });
+
+    // Fingerprint Enrollment
+    dispatcher.registerCallback(CMD_ENROLL_FINGERPRINT, [this](const Event &e) { handleFingerprintEnroll(e); });
+    dispatcher.registerCallback(CMD_ENROLL_FINGERPRINT, [this](const Event &e) { handleFingerprintEnroll(e); });
+    dispatcher.registerCallback(PLACE_FINGER, [this](const Event &e) { handlePlaceFinger(e); });
+    dispatcher.registerCallback(PLACE_FINGER_AGAIN, [this](const Event &e) { handlePlaceFingerAgain(e); });
+    dispatcher.registerCallback(REMOVE_FINGER, [this](const Event &e) { handleRemoveFinger(e); });
+    dispatcher.registerCallback(FINGERPRINT_ENROLLED, [this](const Event &e) { handleFingerprintEnrolled(e); });
+    dispatcher.registerCallback(FINGERPRINT_ENROLL_FAILED, [this](const Event &e) { handleFingerprintEnrollFailed(e); });
 }
 
+void EventHandler::handlePlaceFinger(const Event &event) {
+    ui.setStateFor(2, UIState::PLACE_FINGER);
+}
+
+void EventHandler::handlePlaceFingerAgain(const Event &event) {
+    ui.setStateFor(2, UIState::PLACE_FINGER_AGAIN);
+}
+
+void EventHandler::handleRemoveFinger(const Event &event) {
+    ui.setStateFor(2, UIState::REMOVE_FINGER);
+}
+
+void EventHandler::handleFingerprintEnrolled(const Event &event) {
+    ui.setStateFor(2, UIState::FINGERPRINT_ENROLLED);
+    network.sendEvent("fingerprint_enrolled", JsonObject());
+}
+
+void EventHandler::handleFingerprintEnrollFailed(const Event &event) {
+    ui.setStateFor(2, UIState::FINGERPRINT_ENROLL_FAILED);
+    network.sendEvent("fingerprint_enrollment_failed", JsonObject());
+
+}
 
 void EventHandler::handleTelegramAudioCommand(const Event &event) {
     std::string action = event.data;
@@ -59,28 +90,30 @@ void EventHandler::handleTelegramAudioCommand(const Event &event) {
 
     if (action == "start_recording") {
         audio.startRecording();
-        data["action"] = "start_recording";
     } else if (action == "stop_recording") {
         audio.stopRecording();
-        data["action"] = "stop_recording";
     } else if (action == "start_playing") {
         audio.startPlayback();
-        data["action"] = "start_playing";
     } else if (action == "stop_playing") {
         audio.stopPlayback();
-        data["action"] = "stop_playing";
     } else if (action == "start_prefetch") {
         audio.startPrefetch();
-        data["action"] = "start_prefetch";
     } else if (action == "stop_prefetch") {
         audio.stopPrefetch();
-        data["action"] = "stop_prefetch";
+        ui.setStateFor(2, UIState::AUDIO_MESSAGE_RECEIVED);
     } else {
         LOG_W(TAG, "Unknown Telegram audio command: %s", action.c_str());
         return;
     }
 
     LOG_I(TAG, "Telegram audio command executed: %s", action.c_str());
+}
+
+void EventHandler::handleFingerprintEnroll(const Event &event) {
+    StaticJsonDocument<64> doc;
+    deserializeJson(doc, event.data);
+    uint8_t id = doc["id"];
+    fingerprint.startEnrollment(id);
 }
 
 void EventHandler::handleRecordingSent() {
@@ -116,6 +149,7 @@ void EventHandler::handleESPAudioCommand(const Event &event) {
     } else if (action == "stop_prefetch") {
         audio.stopPrefetch();
         data["action"] = "stop_prefetch";
+        ui.setStateFor(2, UIState::AUDIO_MESSAGE_RECEIVED);
     } else {
         LOG_W(TAG, "Unknown ESP audio command: %s", action.c_str());
         return;
