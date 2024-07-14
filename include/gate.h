@@ -14,20 +14,14 @@ enum GateState {
 class Gate {
 public:
     Gate();
-
     void begin(EventDispatcher &dispatcher);
-
     void openGate();
-
     void closeGate();
 
 private:
     static void gateTask(void *parameter);
-
     void stopGate() const;
-
     void resumeClosing() const;
-
     void gateFullyClosed();
 
     int motorPin1;
@@ -37,17 +31,9 @@ private:
     int reedSwitchPin;
     GateState currentState;
     unsigned long stateStartTime;
-
     bool personEntered;
 
-    // Debounce variables
-    unsigned long lastBreakBeamDebounceTime;
-    unsigned long lastReedSwitchDebounceTime;
-    int lastBreakBeamState;
-    int lastReedSwitchState;
-
     static EventDispatcher *eventDispatcher;
-    static const unsigned long DEBOUNCE_DELAY = 50; // 50ms debounce time
     static const unsigned long CLOSE_DELAY = 3000; // 3 seconds delay before closing
 };
 

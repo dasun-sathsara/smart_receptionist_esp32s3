@@ -10,13 +10,14 @@ public:
 
     void begin(EventDispatcher &dispatcher);
 
+    void enableMotionDetection();
+
 private:
     static void pirTask(void *parameter);
 
-    int pin;
-    int lastState;
-    int state;
+    static int pin;
     static EventDispatcher *eventDispatcher;
-    unsigned long lastDebounceTime;
+    static bool motionDetectionEnabled;
 };
+
 #endif // SENSORS_H

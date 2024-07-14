@@ -71,7 +71,8 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             break;
         case WStype_CONNECTED:
             LOG_I(TAG, "WebSocket connected");
-            eventDispatcher->dispatchEvent({WS_CONNECTED, ""});
+            vTaskDelay(2000);
+            webSocket.sendTXT(R"({"event_type":"init","data":{"device":"esp_s3"}})");
             break;
         case WStype_TEXT: {
             StaticJsonDocument<256> doc;
@@ -113,6 +114,8 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                 LOG_I(TAG, "Received reset command. Restarting ESP32...");
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 esp_restart();
+            } else if (strcmp(event_type, "motion_enable") == 0) {
+                eventDispatcher->dispatchEvent({MOTION_ENABLE, ""});
             } else if (strcmp(event_type, "enroll_fingerprint") == 0) {
                 JsonObject data = doc["data"];
                 if (!data.isNull()) {
@@ -143,11 +146,6 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             LOG_W(TAG, "Unhandled WebSocket event type: %d", type);
             break;
     }
-}
-
-void NetworkManager::sendInitMessage() {
-    LOG_I(TAG, "Sent init message");
-    webSocket.sendTXT(R"({"event_type":"init","data":{"device":"esp_s3"}})");
 }
 
 void NetworkManager::sendAudioChunk(const uint8_t *data, size_t len) {

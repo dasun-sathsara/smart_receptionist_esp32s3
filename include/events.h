@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <string>
 
-constexpr size_t MAX_EVENTS = 64;
+constexpr size_t MAX_EVENTS = 128;
 
 using EventType = uint8_t;
 
@@ -67,6 +67,8 @@ enum Events : EventType {
     REMOVE_FINGER,
     FINGERPRINT_ENROLLED,
     FINGERPRINT_ENROLL_FAILED,
+    MOTION_ENABLE,
+    DISABLE_STATUS_LED,
 };
 
 #endif // EVENTS_H

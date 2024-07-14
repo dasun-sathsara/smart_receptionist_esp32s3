@@ -34,10 +34,10 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 
     while (true) {
 
-//        if (!handler->sensorEnabled) {
-//            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
-//            continue;
-//        }
+        if (!handler->sensorEnabled) {
+            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
+            continue;
+        }
 
         if (handler->isEnrolling) {
             uint8_t result = handler->getFingerprintEnroll();

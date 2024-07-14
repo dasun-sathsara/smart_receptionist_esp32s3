@@ -41,7 +41,34 @@ void UI::begin(EventDispatcher &dispatcher) {
 
 
     xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
+    stateTimer = xTimerCreate("StateTimer", pdMS_TO_TICKS(1000), pdFALSE, this, stateTimerCallback);
     LOG_I(TAG, "UI initialized");
+}
+
+void UI::setStateFor(int seconds, UIState newState) {
+    scheduledState = currentState;
+    setState(newState);
+
+    if (xTimerIsTimerActive(stateTimer) == pdTRUE) {
+        xTimerStop(stateTimer, 0);
+    }
+
+    xTimerChangePeriod(stateTimer, pdMS_TO_TICKS(seconds * 1000), 0);
+    xTimerStart(stateTimer, 0);
+
+    LOG_I(TAG, "UI state changed to %d for %d seconds", static_cast<int>(newState), seconds);
+}
+
+void UI::stateTimerCallback(TimerHandle_t xTimer) {
+    UI *ui = static_cast<UI *>(pvTimerGetTimerID(xTimer));
+    ui->setState(ui->scheduledState);
+    LOG_I(TAG, "UI state changed back to %d", static_cast<int>(ui->scheduledState));
+}
+
+void UI::setState(UIState newState) {
+    currentState = newState;
+    lastStateChangeTime = xTaskGetTickCount();
+    LOG_I(TAG, "UI state changed to: %d", static_cast<int>(newState));
 }
 
 [[noreturn]] void UI::uiTask(void *parameter) {
@@ -65,7 +92,7 @@ void UI::disableDisplay() {
 }
 
 void UI::update() {
-//    if (!displayEnabled) return;
+    if (!displayEnabled) return;
 
     char key = keypad.getKey();
     if (key) {
@@ -74,13 +101,6 @@ void UI::update() {
     }
 
     unsigned long currentTime = millis();
-
-    // Check for temporary state expiration
-    if (temporaryState && currentTime >= stateEndTime) {
-        setState(originalState);
-        temporaryState = false;
-        LOG_I(TAG, "UI state changed back to %d", static_cast<int>(originalState));
-    }
 
     // Check for timeout to return to welcome screen
     if (currentTime - lastStateChangeTime > STATE_TIMEOUT &&
@@ -93,20 +113,6 @@ void UI::update() {
     if (!enteringPassword) {
         displayCurrentState();
     }
-}
-
-void UI::setState(UIState newState) {
-    currentState = newState;
-    lastStateChangeTime = millis();
-    LOG_I(TAG, "UI state changed to: %d", static_cast<int>(newState));
-}
-
-void UI::setStateFor(int seconds, UIState newState) {
-    setState(newState);
-    stateEndTime = millis() + (seconds * 1000);
-    temporaryState = true;
-    originalState = currentState;
-    LOG_I(TAG, "UI state changed to %d for %d seconds", static_cast<int>(newState), seconds);
 }
 
 void UI::handleKeyPress(char key) {

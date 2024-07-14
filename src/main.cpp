@@ -9,15 +9,15 @@
 #include "gate.h"
 #include "pir.h"
 #include "led.h"
-#include "config.h"
 #include "event_handler.h"
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
+#include <PubSubClient.h>
 
 static const char *TAG = "MAIN";
 
 EventDispatcher eventDispatcher;
-NetworkManager wifiHandler;
+NetworkManager network;
 UI ui;
 HardwareSerial fingerprintSerial(1);
 FingerprintHandler fingerprintHandler(fingerprintSerial);
@@ -26,26 +26,26 @@ Gate gate;
 LED led;
 Audio audio;
 ESPNow espNow;
-EventHandler eventHandler(audio, wifiHandler, gate, led, ui, espNow, fingerprintHandler);
+EventHandler eventHandler(audio, network, gate, led, ui, espNow, fingerprintHandler, pirSensor);
+
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
 
 void setup() {
     Serial.begin(115200);
+    network.begin(eventDispatcher);
+    vTaskDelay(2000);
+
+    // Initialize MQTT client
+    mqttClient.setServer("192.168.17.218", 1883);
+    logger.begin(mqttClient);
+    mqttClient.connect("SmartReceptionist");
 
     // Disable brownout detector
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
     LOG_I(TAG, "Brownout detector disabled");
 
-    // Check PSRAM
-    if (psramFound()) {
-        size_t psramSize = ESP.getPsramSize();
-        LOG_I(TAG, "PSRAM is available. Capacity: %d bytes", psramSize);
-    } else {
-        LOG_E(TAG, "PSRAM is not available or not working!");
-    }
-
     eventHandler.registerCallbacks(eventDispatcher);
-
-    wifiHandler.begin(eventDispatcher);
     gate.begin(eventDispatcher);
     ui.begin(eventDispatcher);
     audio.begin(eventDispatcher);
@@ -54,9 +54,9 @@ void setup() {
     led.begin(eventDispatcher);
     espNow.begin(eventDispatcher);
 
+
     LOG_I(TAG, "System initialization complete");
 }
 
 void loop() {
-    // The main loop is empty because tasks are handled by FreeRTOS
 }

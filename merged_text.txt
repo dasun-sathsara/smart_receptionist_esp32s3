@@ -89,6 +89,9 @@ private:
 // LED strip configuration
 #define LED_STRIP_PIN 40
 
+#define RGB_LED_PIN 48
+#define NUM_LEDS 1
+
 // Door Sensor configuration
 #define REED_SWITCH_PIN 14
 
@@ -133,7 +136,7 @@ private:
 #define GATE_PWM_CHANNEL 0
 #define GATE_PWM_RESOLUTION 8
 #define GATE_DUTY_CYCLE 200
-#define GATE_OPERATION_TIME 8500 // 8.5 seconds in milliseconds
+#define GATE_OPERATION_TIME 6000 // 8.5 seconds in milliseconds
 #define GATE_WAIT_TIME 5000 // 5 seconds in milliseconds
 
 #endif // CONFIG_H
@@ -183,7 +186,7 @@ private:
 #include <cstdint>
 #include <string>
 
-constexpr size_t MAX_EVENTS = 64;
+constexpr size_t MAX_EVENTS = 128;
 
 using EventType = uint8_t;
 
@@ -237,6 +240,14 @@ enum Events : EventType {
     RECORDING_SENT,
     NO_AUDIO_DATA,
     VISITOR_ENTERED,
+    CMD_ENROLL_FINGERPRINT,
+    PLACE_FINGER,
+    PLACE_FINGER_AGAIN,
+    REMOVE_FINGER,
+    FINGERPRINT_ENROLLED,
+    FINGERPRINT_ENROLL_FAILED,
+    MOTION_ENABLE,
+    DISABLE_STATUS_LED,
 };
 
 #endif // EVENTS_H
@@ -257,10 +268,12 @@ enum Events : EventType {
 #include "esp_now.h"
 #include "esp_now_manager.h"
 #include "fingerprint.h"
+#include "pir.h"
 
 class EventHandler {
 public:
-    EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow, FingerprintHandler &fingerprint);
+    EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow, FingerprintHandler &fingerprint,
+                 PIRSensor &pir);
 
     void registerCallbacks(EventDispatcher &dispatcher);
 
@@ -272,6 +285,7 @@ private:
     UI &ui;
     ESPNow &espNow;
     FingerprintHandler &fingerprint;
+    PIRSensor &pir;
 
     void handleTelegramAudioCommand(const Event &event);
 
@@ -289,7 +303,6 @@ private:
 
     void handleAudioDataReady(const Event &event);
 
-    void handleWebSocketConnected();
 
     void handleFingerprintNoMatch();
 
@@ -299,7 +312,7 @@ private:
 
     void handleAccessDenied();
 
-    void handleMotionDetected();
+    void handlePIRTriggered();
 
     void handlePasswordInvalid();
 
@@ -307,15 +320,24 @@ private:
 
     void handleRecordingSent();
 
-    void handleBreakBeamTriggered();
-
-    void handleGateFullyClosed();
-
-    void handleMotionDetected(const Event &event);
+    void handleFingerprintEnroll(const Event &event);
 
     void handleInactivityDetected(const Event &event);
 
     void handleVisitorEntered();
+
+    void handlePlaceFinger(const Event &event);
+
+    void handlePlaceFingerAgain(const Event &event);
+
+    void handleRemoveFinger(const Event &event);
+
+    void handleFingerprintEnrolled(const Event &event);
+
+    void handleFingerprintEnrollFailed(const Event &event);
+
+    void handleMotionEnable(const Event &event);
+
 };
 
 #endif // EVENT_HANDLER_H
@@ -341,10 +363,17 @@ public:
 
     void disableSensor();
 
+    void startEnrollment(uint8_t id);
+
 private:
     static void fingerprintTask(void *parameter);
 
+    uint8_t getFingerprintEnroll();
+
+
     HardwareSerial mySerial;
+    bool isEnrolling = false;
+    uint8_t enrollId = 0;
     bool sensorEnabled;
     Adafruit_Fingerprint fingerprint;
     static EventDispatcher *eventDispatcher;
@@ -372,20 +401,14 @@ enum GateState {
 class Gate {
 public:
     Gate();
-
     void begin(EventDispatcher &dispatcher);
-
     void openGate();
-
     void closeGate();
 
 private:
     static void gateTask(void *parameter);
-
     void stopGate() const;
-
     void resumeClosing() const;
-
     void gateFullyClosed();
 
     int motorPin1;
@@ -395,17 +418,9 @@ private:
     int reedSwitchPin;
     GateState currentState;
     unsigned long stateStartTime;
-
     bool personEntered;
 
-    // Debounce variables
-    unsigned long lastBreakBeamDebounceTime;
-    unsigned long lastReedSwitchDebounceTime;
-    int lastBreakBeamState;
-    int lastReedSwitchState;
-
     static EventDispatcher *eventDispatcher;
-    static const unsigned long DEBOUNCE_DELAY = 50; // 50ms debounce time
     static const unsigned long CLOSE_DELAY = 3000; // 3 seconds delay before closing
 };
 
@@ -509,28 +524,42 @@ private:
 #define LOGGER_H
 
 #include <Arduino.h>
-#include <cstdarg>
+#include <MqttLogger.h>
+#include <PubSubClient.h>
 
 enum LogLevel {
-    LOG_NONE = 0,   // No logging
+    LOG_NONE = 0,
     LOG_ERROR,
     LOG_WARN,
     LOG_INFO,
     LOG_DEBUG
 };
 
-extern LogLevel currentLogLevel;
+class Logger {
+public:
+    Logger();
 
-extern void logger(LogLevel level, const char *tag, const char *format, ...);
+    void begin(PubSubClient &client);
 
-// Macros for convenience (similar to esp_log)
-#define LOG_E(tag, format, ...) logger(LOG_ERROR, tag, format, ##__VA_ARGS__)
-#define LOG_W(tag, format, ...) logger(LOG_WARN,  tag, format, ##__VA_ARGS__)
-#define LOG_I(tag, format, ...) logger(LOG_INFO,  tag, format, ##__VA_ARGS__)
-#define LOG_D(tag, format, ...) logger(LOG_DEBUG, tag, format, ##__VA_ARGS__)
+    void log(LogLevel level, const char *tag, const char *format, ...);
+
+    static LogLevel currentLogLevel;
+
+private:
+    MqttLogger *mqttLogger;
+    bool mqttInitialized;
+    static const size_t LOG_BUFFER_SIZE = 256;
+    char logBuffer[LOG_BUFFER_SIZE];
+};
+
+extern Logger logger;
+
+#define LOG_E(tag, format, ...) logger.log(LOG_ERROR, tag, format, ##__VA_ARGS__)
+#define LOG_W(tag, format, ...) logger.log(LOG_WARN,  tag, format, ##__VA_ARGS__)
+#define LOG_I(tag, format, ...) logger.log(LOG_INFO,  tag, format, ##__VA_ARGS__)
+#define LOG_D(tag, format, ...) logger.log(LOG_DEBUG, tag, format, ##__VA_ARGS__)
 
 #endif // LOGGER_H
-
 
 ############################################
 
@@ -584,15 +613,16 @@ public:
 
     void begin(EventDispatcher &dispatcher);
 
+    void enableMotionDetection();
+
 private:
     static void pirTask(void *parameter);
 
-    int pin;
-    int lastState;
-    int state;
+    static int pin;
     static EventDispatcher *eventDispatcher;
-    unsigned long lastDebounceTime;
+    static bool motionDetectionEnabled;
 };
+
 #endif // SENSORS_H
 
 #########################################
@@ -629,7 +659,8 @@ enum class UIState {
     PLACE_FINGER_AGAIN,
     REMOVE_FINGER,
     FINGERPRINT_ENROLLED,
-    FINGERPRINT_ENROLL_FAILED
+    FINGERPRINT_ENROLL_FAILED,
+    AUDIO_MESSAGE_RECEIVED,
 };
 
 class UI {
@@ -677,6 +708,11 @@ private:
     unsigned long stateEndTime{};
     bool temporaryState{};
     UIState originalState{};
+    TimerHandle_t stateTimer;
+
+    static void stateTimerCallback(TimerHandle_t xTimer);
+
+    UIState scheduledState;
 };
 
 #endif // UI_H
@@ -983,8 +1019,8 @@ void EventDispatcher::dispatchEvent(const Event &event) {
 static const char *TAG = "EventHandler";
 
 EventHandler::EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow,
-                           FingerprintHandler &fingerprint)
-        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow), fingerprint(fingerprint) {}
+                           FingerprintHandler &fingerprint, PIRSensor &pir)
+        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow), fingerprint(fingerprint), pir(pir) {};
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     // Audio Commands
@@ -992,9 +1028,6 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_ESP_AUDIO, [this](const Event &e) { handleESPAudioCommand(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
     dispatcher.registerCallback(AUDIO_DATA_READY, [this](const Event &e) { handleAudioDataReady(e); });
-
-    // WebSocket Events
-    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(); });
 
     // Authentication Events
     dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleFingerprintMatch(e); });
@@ -1014,7 +1047,7 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleAccessDenied(); });
 
     // Detection Events
-    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(); });
+    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handlePIRTriggered(); });
     dispatcher.registerCallback(PERSON_DETECTED, [this](const Event &e) { handlePersonDetected(); });
 
     // Gate Events
@@ -1025,10 +1058,46 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(NO_AUDIO_DATA, [this](const Event &e) { ui.setStateFor(3, UIState::NO_AUDIO_DATA); });
 
     // Power Saving
-    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
     dispatcher.registerCallback(INACTIVITY_DETECTED, [this](const Event &e) { handleInactivityDetected(e); });
+
+    // Fingerprint Enrollment
+    dispatcher.registerCallback(CMD_ENROLL_FINGERPRINT, [this](const Event &e) { handleFingerprintEnroll(e); });
+    dispatcher.registerCallback(CMD_ENROLL_FINGERPRINT, [this](const Event &e) { handleFingerprintEnroll(e); });
+    dispatcher.registerCallback(PLACE_FINGER, [this](const Event &e) { handlePlaceFinger(e); });
+    dispatcher.registerCallback(PLACE_FINGER_AGAIN, [this](const Event &e) { handlePlaceFingerAgain(e); });
+    dispatcher.registerCallback(REMOVE_FINGER, [this](const Event &e) { handleRemoveFinger(e); });
+    dispatcher.registerCallback(FINGERPRINT_ENROLLED, [this](const Event &e) { handleFingerprintEnrolled(e); });
+    dispatcher.registerCallback(FINGERPRINT_ENROLL_FAILED, [this](const Event &e) { handleFingerprintEnrollFailed(e); });
+
+    dispatcher.registerCallback(MOTION_ENABLE, [this](const Event &e) { handleMotionEnable(e); });
 }
 
+void EventHandler::handleMotionEnable(const Event &event) {
+    pir.enableMotionDetection();
+}
+
+void EventHandler::handlePlaceFinger(const Event &event) {
+    ui.setStateFor(2, UIState::PLACE_FINGER);
+}
+
+void EventHandler::handlePlaceFingerAgain(const Event &event) {
+    ui.setStateFor(2, UIState::PLACE_FINGER_AGAIN);
+}
+
+void EventHandler::handleRemoveFinger(const Event &event) {
+    ui.setStateFor(2, UIState::REMOVE_FINGER);
+}
+
+void EventHandler::handleFingerprintEnrolled(const Event &event) {
+    ui.setStateFor(2, UIState::FINGERPRINT_ENROLLED);
+    network.sendEvent("fingerprint_enrolled", JsonObject());
+}
+
+void EventHandler::handleFingerprintEnrollFailed(const Event &event) {
+    ui.setStateFor(2, UIState::FINGERPRINT_ENROLL_FAILED);
+    network.sendEvent("fingerprint_enrollment_failed", JsonObject());
+
+}
 
 void EventHandler::handleTelegramAudioCommand(const Event &event) {
     std::string action = event.data;
@@ -1036,28 +1105,30 @@ void EventHandler::handleTelegramAudioCommand(const Event &event) {
 
     if (action == "start_recording") {
         audio.startRecording();
-        data["action"] = "start_recording";
     } else if (action == "stop_recording") {
         audio.stopRecording();
-        data["action"] = "stop_recording";
     } else if (action == "start_playing") {
         audio.startPlayback();
-        data["action"] = "start_playing";
     } else if (action == "stop_playing") {
         audio.stopPlayback();
-        data["action"] = "stop_playing";
     } else if (action == "start_prefetch") {
         audio.startPrefetch();
-        data["action"] = "start_prefetch";
     } else if (action == "stop_prefetch") {
         audio.stopPrefetch();
-        data["action"] = "stop_prefetch";
+        ui.setStateFor(2, UIState::AUDIO_MESSAGE_RECEIVED);
     } else {
         LOG_W(TAG, "Unknown Telegram audio command: %s", action.c_str());
         return;
     }
 
     LOG_I(TAG, "Telegram audio command executed: %s", action.c_str());
+}
+
+void EventHandler::handleFingerprintEnroll(const Event &event) {
+    StaticJsonDocument<64> doc;
+    deserializeJson(doc, event.data);
+    uint8_t id = doc["id"];
+    fingerprint.startEnrollment(id);
 }
 
 void EventHandler::handleRecordingSent() {
@@ -1093,6 +1164,7 @@ void EventHandler::handleESPAudioCommand(const Event &event) {
     } else if (action == "stop_prefetch") {
         audio.stopPrefetch();
         data["action"] = "stop_prefetch";
+        ui.setStateFor(2, UIState::AUDIO_MESSAGE_RECEIVED);
     } else {
         LOG_W(TAG, "Unknown ESP audio command: %s", action.c_str());
         return;
@@ -1100,11 +1172,6 @@ void EventHandler::handleESPAudioCommand(const Event &event) {
 
     network.sendEvent("audio", data.as<JsonObject>());
     LOG_I(TAG, "ESP audio command executed: %s", action.c_str());
-}
-
-
-void EventHandler::handleWebSocketConnected() {
-    network.sendInitMessage();
 }
 
 void EventHandler::handleAudioDataReceived(const Event &event) {
@@ -1180,10 +1247,10 @@ void EventHandler::handleAccessDenied() {
 }
 
 void EventHandler::handleMotionDetected() {
+    LOG_I(TAG, "Motion detected and visitor identification initiated!");
     ui.setStateFor(2, UIState::MOTION_DETECTED);
     espNow.sendCommand("capture_image");
     network.sendEvent("motion_detected", JsonObject());
-    LOG_I(TAG, "Motion detected and visitor identification initiated!");
 }
 
 void EventHandler::handlePersonDetected() {
@@ -1198,17 +1265,12 @@ void EventHandler::handleVisitorEntered() {
     network.sendEvent("visitor_entered", data.as<JsonObject>());
 }
 
-void EventHandler::handleMotionDetected(const Event &event) {
-    ui.enableDisplay();
-    fingerprint.enableSensor();
-    LOG_I(TAG, "Motion detected, components enabled");
-}
-
 void EventHandler::handleInactivityDetected(const Event &event) {
     ui.disableDisplay();
     fingerprint.disableSensor();
     LOG_I(TAG, "Inactivity detected, components disabled");
 }
+
 
 #################################################
 
@@ -1250,8 +1312,19 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 
     while (true) {
 
-        if (!handler->sensorEnabled) {
-            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
+//        if (!handler->sensorEnabled) {
+//            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
+//            continue;
+//        }
+
+        if (handler->isEnrolling) {
+            uint8_t result = handler->getFingerprintEnroll();
+            if (result == FINGERPRINT_OK) {
+                handler->isEnrolling = false;
+            } else {
+                handler->eventDispatcher->dispatchEvent({FINGERPRINT_ENROLL_FAILED, ""});
+                handler->isEnrolling = false;
+            }
             continue;
         }
 
@@ -1281,6 +1354,147 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
     }
 }
 
+void FingerprintHandler::startEnrollment(uint8_t id) {
+    isEnrolling = true;
+    enrollId = id;
+    LOG_I(TAG, "Starting fingerprint enrollment for ID %d", id);
+    eventDispatcher->dispatchEvent({PLACE_FINGER, ""});
+}
+
+uint8_t FingerprintHandler::getFingerprintEnroll() {
+    int p = -1;
+    LOG_I(TAG, "Waiting for valid finger to enroll as #%d", enrollId);
+    while (p != FINGERPRINT_OK) {
+        p = fingerprint.getImage();
+        switch (p) {
+            case FINGERPRINT_OK:
+                LOG_I(TAG, "Image taken");
+                break;
+            case FINGERPRINT_NOFINGER:
+                LOG_D(TAG, ".");
+                break;
+            case FINGERPRINT_PACKETRECIEVEERR:
+                LOG_E(TAG, "Communication error");
+                break;
+            case FINGERPRINT_IMAGEFAIL:
+                LOG_E(TAG, "Imaging error");
+                break;
+            default:
+                LOG_E(TAG, "Unknown error");
+                break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    p = fingerprint.image2Tz(1);
+    switch (p) {
+        case FINGERPRINT_OK:
+            LOG_I(TAG, "Image converted");
+            break;
+        case FINGERPRINT_IMAGEMESS:
+            LOG_E(TAG, "Image too messy");
+            return p;
+        case FINGERPRINT_PACKETRECIEVEERR:
+            LOG_E(TAG, "Communication error");
+            return p;
+        case FINGERPRINT_FEATUREFAIL:
+        case FINGERPRINT_INVALIDIMAGE:
+            LOG_E(TAG, "Could not find fingerprint features");
+            return p;
+        default:
+            LOG_E(TAG, "Unknown error");
+            return p;
+    }
+
+    eventDispatcher->dispatchEvent({REMOVE_FINGER, ""});
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    p = 0;
+    while (p != FINGERPRINT_NOFINGER) {
+        p = fingerprint.getImage();
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    p = -1;
+    eventDispatcher->dispatchEvent({PLACE_FINGER_AGAIN, ""});
+    while (p != FINGERPRINT_OK) {
+        p = fingerprint.getImage();
+        switch (p) {
+            case FINGERPRINT_OK:
+                LOG_I(TAG, "Image taken");
+                break;
+            case FINGERPRINT_NOFINGER:
+                LOG_D(TAG, ".");
+                break;
+            case FINGERPRINT_PACKETRECIEVEERR:
+                LOG_E(TAG, "Communication error");
+                break;
+            case FINGERPRINT_IMAGEFAIL:
+                LOG_E(TAG, "Imaging error");
+                break;
+            default:
+                LOG_E(TAG, "Unknown error");
+                break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    p = fingerprint.image2Tz(2);
+    switch (p) {
+        case FINGERPRINT_OK:
+            LOG_I(TAG, "Image converted");
+            break;
+        case FINGERPRINT_IMAGEMESS:
+            LOG_E(TAG, "Image too messy");
+            return p;
+        case FINGERPRINT_PACKETRECIEVEERR:
+            LOG_E(TAG, "Communication error");
+            return p;
+        case FINGERPRINT_FEATUREFAIL:
+        case FINGERPRINT_INVALIDIMAGE:
+            LOG_E(TAG, "Could not find fingerprint features");
+            return p;
+        default:
+            LOG_E(TAG, "Unknown error");
+            return p;
+    }
+
+    LOG_I(TAG, "Creating model for #%d", enrollId);
+    p = fingerprint.createModel();
+    if (p == FINGERPRINT_OK) {
+        LOG_I(TAG, "Prints matched!");
+    } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
+        LOG_E(TAG, "Communication error");
+        return p;
+    } else if (p == FINGERPRINT_ENROLLMISMATCH) {
+        LOG_E(TAG, "Fingerprints did not match");
+        return p;
+    } else {
+        LOG_E(TAG, "Unknown error");
+        return p;
+    }
+
+    p = fingerprint.storeModel(enrollId);
+    if (p == FINGERPRINT_OK) {
+        LOG_I(TAG, "Stored!");
+        eventDispatcher->dispatchEvent({FINGERPRINT_ENROLLED, ""});
+    } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
+        LOG_E(TAG, "Communication error");
+        return p;
+    } else if (p == FINGERPRINT_BADLOCATION) {
+        LOG_E(TAG, "Could not store in that location");
+        return p;
+    } else if (p == FINGERPRINT_FLASHERR) {
+        LOG_E(TAG, "Error writing to flash");
+        return p;
+    } else {
+        LOG_E(TAG, "Unknown error");
+        return p;
+    }
+
+    return FINGERPRINT_OK;
+}
+
 void FingerprintHandler::enableSensor() {
     sensorEnabled = true;
     LOG_I(TAG, "Fingerprint sensor enabled");
@@ -1302,9 +1516,9 @@ void FingerprintHandler::disableSensor() {
 #include "logger.h"
 
 static const char *TAG = "GATE";
+
 EventDispatcher *Gate::eventDispatcher = nullptr;
 
-// Constructor initializes all member variables
 Gate::Gate()
         : motorPin1(MOTOR_PIN1),
           motorPin2(MOTOR_PIN2),
@@ -1313,30 +1527,23 @@ Gate::Gate()
           reedSwitchPin(REED_SWITCH_PIN),
           currentState(G_CLOSED),
           stateStartTime(0),
-          lastBreakBeamDebounceTime(0),
-          lastReedSwitchDebounceTime(0),
-          lastBreakBeamState(HIGH),
-          lastReedSwitchState(HIGH),
           personEntered(false) {}
 
-// Initialize gate control system
 void Gate::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-    // Set up GPIO pins
     pinMode(motorPin1, OUTPUT);
     pinMode(motorPin2, OUTPUT);
     pinMode(enablePin, OUTPUT);
     pinMode(breakBeamPin, INPUT_PULLUP);
     pinMode(reedSwitchPin, INPUT_PULLUP);
-    // Configure PWM for motor control
+
     ledcSetup(GATE_PWM_CHANNEL, GATE_PWM_FREQ, GATE_PWM_RESOLUTION);
     ledcAttachPin(enablePin, GATE_PWM_CHANNEL);
-    // Create gate control task
+
     xTaskCreate(gateTask, "Gate Task", 4096, this, 1, nullptr);
     LOG_I(TAG, "Gate control system initialized");
 }
 
-// Main gate control loop
 void Gate::gateTask(void *parameter) {
     auto *gate = static_cast<Gate *>(parameter);
     while (true) {
@@ -1345,7 +1552,6 @@ void Gate::gateTask(void *parameter) {
                 // Gate is closed, waiting for open command
                 break;
             case G_OPENING:
-                // Check if gate has been opening for the full operation time
                 if (millis() - gate->stateStartTime >= GATE_OPERATION_TIME) {
                     gate->stopGate();
                     gate->currentState = G_OPEN;
@@ -1355,71 +1561,37 @@ void Gate::gateTask(void *parameter) {
                 }
                 break;
             case G_OPEN:
-                // If someone has entered and delay time has passed, close the gate
                 if (gate->personEntered && (millis() - gate->stateStartTime >= CLOSE_DELAY)) {
                     gate->closeGate();
                 }
                 break;
             case G_CLOSING:
-                // Handle break beam sensor (obstacle detection)
-                int breakBeamReading = digitalRead(gate->breakBeamPin);
-                if (breakBeamReading != gate->lastBreakBeamState) {
-                    gate->lastBreakBeamDebounceTime = millis();
-                }
-                if ((millis() - gate->lastBreakBeamDebounceTime) > DEBOUNCE_DELAY) {
-                    if (breakBeamReading != gate->lastBreakBeamState) {
-                        gate->lastBreakBeamState = breakBeamReading;
-                        if (gate->lastBreakBeamState == LOW) {
-                            // Obstacle detected, stop gate and wait
-                            gate->stopGate();
-                            while (digitalRead(gate->breakBeamPin) == LOW) {
-                                vTaskDelay(pdMS_TO_TICKS(100));
-                            }
-                            gate->resumeClosing();
-                        }
+                if (digitalRead(gate->breakBeamPin) == LOW) {
+                    gate->stopGate();
+                    while (digitalRead(gate->breakBeamPin) == LOW) {
+                        vTaskDelay(pdMS_TO_TICKS(100));
                     }
+                    gate->resumeClosing();
                 }
-                // Handle reed switch (gate fully closed detection)
-                int reedSwitchReading = digitalRead(gate->reedSwitchPin);
-                if (reedSwitchReading != gate->lastReedSwitchState) {
-                    gate->lastReedSwitchDebounceTime = millis();
-                }
-                if ((millis() - gate->lastReedSwitchDebounceTime) > DEBOUNCE_DELAY) {
-                    if (reedSwitchReading != gate->lastReedSwitchState) {
-                        gate->lastReedSwitchState = reedSwitchReading;
-                        if (gate->lastReedSwitchState == LOW) {
-                            gate->gateFullyClosed();
-                        }
-                    }
+
+                if (digitalRead(gate->reedSwitchPin) == LOW) {
+                    gate->gateFullyClosed();
                 }
                 break;
         }
 
-        // Detect person entering when gate is open
         if (gate->currentState == G_OPEN && !gate->personEntered) {
-            int breakBeamReading = digitalRead(gate->breakBeamPin);
-            if (breakBeamReading != gate->lastBreakBeamState) {
-                gate->lastBreakBeamDebounceTime = millis();
-            }
-            if ((millis() - gate->lastBreakBeamDebounceTime) > DEBOUNCE_DELAY) {
-                if (breakBeamReading != gate->lastBreakBeamState) {
-                    gate->lastBreakBeamState = breakBeamReading;
-                    if (gate->lastBreakBeamState == LOW) {
-                        gate->personEntered = true;
-                        gate->stateStartTime = millis(); // Reset timer for closing delay
-                        LOG_I(TAG, "Person entered, gate will close in 3 seconds");
-
-                        eventDispatcher->dispatchEvent({VISITOR_ENTERED, ""});
-                    }
-                }
+            if (digitalRead(gate->breakBeamPin) == LOW) {
+                gate->personEntered = true;
+                gate->stateStartTime = millis();
+                LOG_I(TAG, "Person entered, gate will close in 3 seconds");
+                eventDispatcher->dispatchEvent({VISITOR_ENTERED, ""});
             }
         }
-
-        vTaskDelay(pdMS_TO_TICKS(10)); // Prevent task from hogging CPU
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
 
-// Start opening the gate
 void Gate::openGate() {
     if (currentState == G_CLOSED) {
         LOG_I(TAG, "Opening gate");
@@ -1432,7 +1604,6 @@ void Gate::openGate() {
     }
 }
 
-// Start closing the gate
 void Gate::closeGate() {
     if (currentState == G_OPEN) {
         LOG_I(TAG, "Closing gate");
@@ -1443,7 +1614,6 @@ void Gate::closeGate() {
     }
 }
 
-// Stop gate movement
 void Gate::stopGate() const {
     LOG_I(TAG, "Stopping gate");
     digitalWrite(motorPin1, LOW);
@@ -1451,7 +1621,6 @@ void Gate::stopGate() const {
     ledcWrite(GATE_PWM_CHANNEL, 0);
 }
 
-// Resume closing the gate after obstacle is cleared
 void Gate::resumeClosing() const {
     LOG_I(TAG, "Resuming gate closure");
     digitalWrite(motorPin1, LOW);
@@ -1459,7 +1628,6 @@ void Gate::resumeClosing() const {
     ledcWrite(GATE_PWM_CHANNEL, GATE_DUTY_CYCLE);
 }
 
-// Handle gate fully closed state
 void Gate::gateFullyClosed() {
     stopGate();
     currentState = G_CLOSED;
@@ -1506,28 +1674,56 @@ void LED::turnOff() {
 
 #include "logger.h"
 
-#define LOG_BUFFER_SIZE 128
+LogLevel Logger::currentLogLevel = LOG_INFO;
 
-// Define currentLogLevel
-LogLevel currentLogLevel = LOG_INFO;
+Logger::Logger() : mqttLogger(nullptr), mqttInitialized(false) {}
 
-// Define the logger function
-void logger(LogLevel level, const char *tag, const char *format, ...) {
-    if (level > currentLogLevel) return; // Skip if below current log level
+void Logger::begin(PubSubClient &client) {
+    if (mqttLogger != nullptr) {
+        delete mqttLogger;
+    }
+    mqttLogger = new MqttLogger(client, "smartreceptionist/log", MqttLoggerMode::MqttAndSerial);
+    mqttInitialized = true;
+}
 
-    char message[LOG_BUFFER_SIZE];
+void Logger::log(LogLevel level, const char *tag, const char *format, ...) {
+    if (level > currentLogLevel) return;
+
     va_list args;
     va_start(args, format);
-    vsnprintf(message, LOG_BUFFER_SIZE, format, args);
+    vsnprintf(logBuffer, LOG_BUFFER_SIZE, format, args);
     va_end(args);
 
-    // Formatted output
-    Serial.printf("[%s][%s]: %s\n",
-                  level == LOG_ERROR ? "ERROR" : (
-                          level == LOG_WARN ? "WARN" : (
-                                  level == LOG_INFO ? "INFO" : (
-                                          level == LOG_DEBUG ? "DEBUG" : "???"))), tag, message);
+    const char *levelStr;
+    switch (level) {
+        case LOG_ERROR:
+            levelStr = "ERROR";
+            break;
+        case LOG_WARN:
+            levelStr = "WARN";
+            break;
+        case LOG_INFO:
+            levelStr = "INFO";
+            break;
+        case LOG_DEBUG:
+            levelStr = "DEBUG";
+            break;
+        default:
+            levelStr = "???";
+            break;
+    }
+
+    char fullMessage[LOG_BUFFER_SIZE];
+    snprintf(fullMessage, LOG_BUFFER_SIZE, "[%s][%s]: %s", levelStr, tag, logBuffer);
+
+    if (mqttInitialized && mqttLogger) {
+        mqttLogger->println(fullMessage);
+    } else {
+        Serial.print("No MQTT connection available. Fallback to Serial: ");
+    }
 }
+
+Logger logger;
 
 ##########################################
 
@@ -1548,11 +1744,13 @@ void logger(LogLevel level, const char *tag, const char *format, ...) {
 #include "event_handler.h"
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
+#include <PubSubClient.h>
+#include <FastLED.h>
 
 static const char *TAG = "MAIN";
 
 EventDispatcher eventDispatcher;
-NetworkManager wifiHandler;
+NetworkManager network;
 UI ui;
 HardwareSerial fingerprintSerial(1);
 FingerprintHandler fingerprintHandler(fingerprintSerial);
@@ -1561,26 +1759,26 @@ Gate gate;
 LED led;
 Audio audio;
 ESPNow espNow;
-EventHandler eventHandler(audio, wifiHandler, gate, led, ui, espNow, fingerprintHandler);
+EventHandler eventHandler(audio, network, gate, led, ui, espNow, fingerprintHandler, pirSensor);
+
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
 
 void setup() {
     Serial.begin(115200);
+    network.begin(eventDispatcher);
+    vTaskDelay(2000);
+
+    // Initialize MQTT client
+    mqttClient.setServer("192.168.17.218", 1883);
+    logger.begin(mqttClient);
+    mqttClient.connect("SmartReceptionist");
 
     // Disable brownout detector
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
     LOG_I(TAG, "Brownout detector disabled");
 
-    // Check PSRAM
-    if (psramFound()) {
-        size_t psramSize = ESP.getPsramSize();
-        LOG_I(TAG, "PSRAM is available. Capacity: %d bytes", psramSize);
-    } else {
-        LOG_E(TAG, "PSRAM is not available or not working!");
-    }
-
     eventHandler.registerCallbacks(eventDispatcher);
-
-    wifiHandler.begin(eventDispatcher);
     gate.begin(eventDispatcher);
     ui.begin(eventDispatcher);
     audio.begin(eventDispatcher);
@@ -1589,11 +1787,11 @@ void setup() {
     led.begin(eventDispatcher);
     espNow.begin(eventDispatcher);
 
+
     LOG_I(TAG, "System initialization complete");
 }
 
 void loop() {
-    // The main loop is empty because tasks are handled by FreeRTOS
 }
 
 ########################################
@@ -1673,7 +1871,8 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             break;
         case WStype_CONNECTED:
             LOG_I(TAG, "WebSocket connected");
-            eventDispatcher->dispatchEvent({WS_CONNECTED, ""});
+            vTaskDelay(2000);
+            webSocket.sendTXT(R"({"event_type":"init","data":{"device":"esp_s3"}})");
             break;
         case WStype_TEXT: {
             StaticJsonDocument<256> doc;
@@ -1715,6 +1914,17 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                 LOG_I(TAG, "Received reset command. Restarting ESP32...");
                 vTaskDelay(pdMS_TO_TICKS(1000));
                 esp_restart();
+            } else if (strcmp(event_type, "motion_enable") == 0) {
+                eventDispatcher->dispatchEvent({MOTION_ENABLE, ""});
+            } else if (strcmp(event_type, "enroll_fingerprint") == 0) {
+                JsonObject data = doc["data"];
+                if (!data.isNull()) {
+                    String dataString;
+                    serializeJson(data, dataString);
+                    eventDispatcher->dispatchEvent({CMD_ENROLL_FINGERPRINT, dataString.c_str()});
+                } else {
+                    LOG_E(TAG, "Invalid enroll_fingerprint event: missing data");
+                }
             } else {
                 LOG_W(TAG, "Unknown event type: %s", event_type);
             }
@@ -1736,11 +1946,6 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
             LOG_W(TAG, "Unhandled WebSocket event type: %d", type);
             break;
     }
-}
-
-void NetworkManager::sendInitMessage() {
-    LOG_I(TAG, "Sent init message");
-    webSocket.sendTXT(R"({"event_type":"init","data":{"device":"esp_s3"}})");
 }
 
 void NetworkManager::sendAudioChunk(const uint8_t *data, size_t len) {
@@ -1784,53 +1989,43 @@ void NetworkManager::sendEvent(const char *eventType, const JsonObject &data) {
 static const char *TAG_PIR = "PIR_SENSOR";
 
 EventDispatcher *PIRSensor::eventDispatcher = nullptr;
+int PIRSensor::pin = PIR_PIN;
 
-PIRSensor::PIRSensor() : lastDebounceTime(0), lastState(LOW), state(LOW) { pin = PIR_PIN; }
+PIRSensor::PIRSensor() {}
 
 void PIRSensor::begin(EventDispatcher &dispatcher) {
     eventDispatcher = &dispatcher;
-
     pinMode(pin, INPUT);
-    xTaskCreate(pirTask, "PIR Sensor Task", 2048, this, 1, nullptr);
+    xTaskCreate(pirTask, "PIR Sensor Task", 8192, this, 1, nullptr);
     LOG_I(TAG_PIR, "PIR sensor initialized");
+}
+
+bool PIRSensor::motionDetectionEnabled = false;
+
+void PIRSensor::enableMotionDetection() {
+    motionDetectionEnabled = true;
+    LOG_I(TAG_PIR, "Motion detection enabled");
 }
 
 void PIRSensor::pirTask(void *parameter) {
     auto *pirSensor = static_cast<PIRSensor *>(parameter);
-    const unsigned long debounceDelay = 50; // 50ms debounce time
-    const unsigned long cooldownTime = 60000; // 1 minute cooldown
-    const unsigned long inactivityThreshold = 300000; // 5 minutes of inactivity
-    unsigned long lastTriggerTime = 0;
-    unsigned long lastActivityTime = 0;
-
+    int lastState = LOW;
     while (true) {
-        int reading = digitalRead(pirSensor->pin);
-
-        if (reading != pirSensor->lastState) {
-            pirSensor->lastDebounceTime = millis();
-        }
-
-        if ((millis() - pirSensor->lastDebounceTime) > debounceDelay) {
-            if (reading != pirSensor->state) {
-                pirSensor->state = reading;
-
-                if (pirSensor->state == HIGH && (millis() - lastTriggerTime) > cooldownTime) {
+        if (motionDetectionEnabled) {
+            int currentState = digitalRead(pirSensor->pin);
+            if (currentState != lastState) {
+                if (currentState == HIGH) {
+                    LOG_I(TAG_PIR, "Motion detected");
                     eventDispatcher->dispatchEvent({MOTION_DETECTED, ""});
-                    lastTriggerTime = millis();
+                    vTaskDelay(pdMS_TO_TICKS(180000)); // Wait for 3 minutes before checking again
                 }
+                lastState = currentState;
             }
         }
-
-        // Check for inactivity
-        if ((millis() - lastActivityTime) > inactivityThreshold) {
-            eventDispatcher->dispatchEvent({INACTIVITY_DETECTED, ""});
-            lastActivityTime = millis(); // Reset to avoid continuous events
-        }
-
-        pirSensor->lastState = reading;
         vTaskDelay(pdMS_TO_TICKS(10)); // Check every 10ms
     }
 }
+
 
 
 #######################################
@@ -1880,7 +2075,34 @@ void UI::begin(EventDispatcher &dispatcher) {
 
 
     xTaskCreate(uiTask, "UI Task", 4096, this, 1, nullptr);
+    stateTimer = xTimerCreate("StateTimer", pdMS_TO_TICKS(1000), pdFALSE, this, stateTimerCallback);
     LOG_I(TAG, "UI initialized");
+}
+
+void UI::setStateFor(int seconds, UIState newState) {
+    scheduledState = currentState;
+    setState(newState);
+
+    if (xTimerIsTimerActive(stateTimer) == pdTRUE) {
+        xTimerStop(stateTimer, 0);
+    }
+
+    xTimerChangePeriod(stateTimer, pdMS_TO_TICKS(seconds * 1000), 0);
+    xTimerStart(stateTimer, 0);
+
+    LOG_I(TAG, "UI state changed to %d for %d seconds", static_cast<int>(newState), seconds);
+}
+
+void UI::stateTimerCallback(TimerHandle_t xTimer) {
+    UI *ui = static_cast<UI *>(pvTimerGetTimerID(xTimer));
+    ui->setState(ui->scheduledState);
+    LOG_I(TAG, "UI state changed back to %d", static_cast<int>(ui->scheduledState));
+}
+
+void UI::setState(UIState newState) {
+    currentState = newState;
+    lastStateChangeTime = xTaskGetTickCount();
+    LOG_I(TAG, "UI state changed to: %d", static_cast<int>(newState));
 }
 
 [[noreturn]] void UI::uiTask(void *parameter) {
@@ -1904,7 +2126,7 @@ void UI::disableDisplay() {
 }
 
 void UI::update() {
-    if (!displayEnabled) return;
+//    if (!displayEnabled) return;
 
     char key = keypad.getKey();
     if (key) {
@@ -1932,20 +2154,6 @@ void UI::update() {
     if (!enteringPassword) {
         displayCurrentState();
     }
-}
-
-void UI::setState(UIState newState) {
-    currentState = newState;
-    lastStateChangeTime = millis();
-    LOG_I(TAG, "UI state changed to: %d", static_cast<int>(newState));
-}
-
-void UI::setStateFor(int seconds, UIState newState) {
-    setState(newState);
-    stateEndTime = millis() + (seconds * 1000);
-    temporaryState = true;
-    originalState = currentState;
-    LOG_I(TAG, "UI state changed to %d for %d seconds", static_cast<int>(newState), seconds);
 }
 
 void UI::handleKeyPress(char key) {
@@ -2237,6 +2445,15 @@ void UI::displayCurrentState() {
             u8g2.drawStr(17, 36, "ENROLLMENT");
             u8g2.drawStr(37, 53, "FAILED");
             u8g2.drawFrame(1, 1, 125, 61);
+            break;
+        case UIState::AUDIO_MESSAGE_RECEIVED:
+            u8g2.setFontMode(1);
+            u8g2.setBitmapMode(1);
+            u8g2.setFont(u8g2_font_profont17_tr);
+            u8g2.drawStr(40, 19, "AUDIO");
+            u8g2.drawStr(32, 37, "MESSAGE");
+            u8g2.drawFrame(1, 1, 125, 61);
+            u8g2.drawStr(27, 55, "RECEIVED");
             break;
     }
     u8g2.sendBuffer();

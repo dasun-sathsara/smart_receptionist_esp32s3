@@ -6,8 +6,8 @@
 static const char *TAG = "EventHandler";
 
 EventHandler::EventHandler(Audio &audio, NetworkManager &network, Gate &gate, LED &led, UI &ui, ESPNow &espNow,
-                           FingerprintHandler &fingerprint)
-        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow), fingerprint(fingerprint) {}
+                           FingerprintHandler &fingerprint, PIRSensor &pir)
+        : audio(audio), network(network), gate(gate), led(led), ui(ui), espNow(espNow), fingerprint(fingerprint), pir(pir) {};
 
 void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     // Audio Commands
@@ -15,9 +15,6 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_ESP_AUDIO, [this](const Event &e) { handleESPAudioCommand(e); });
     dispatcher.registerCallback(AUDIO_DATA_RECEIVED, [this](const Event &e) { handleAudioDataReceived(e); });
     dispatcher.registerCallback(AUDIO_DATA_READY, [this](const Event &e) { handleAudioDataReady(e); });
-
-    // WebSocket Events
-    dispatcher.registerCallback(WS_CONNECTED, [this](const Event &e) { handleWebSocketConnected(); });
 
     // Authentication Events
     dispatcher.registerCallback(FINGERPRINT_MATCHED, [this](const Event &e) { handleFingerprintMatch(e); });
@@ -48,7 +45,6 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(NO_AUDIO_DATA, [this](const Event &e) { ui.setStateFor(3, UIState::NO_AUDIO_DATA); });
 
     // Power Saving
-    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(e); });
     dispatcher.registerCallback(INACTIVITY_DETECTED, [this](const Event &e) { handleInactivityDetected(e); });
 
     // Fingerprint Enrollment
@@ -59,6 +55,12 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(REMOVE_FINGER, [this](const Event &e) { handleRemoveFinger(e); });
     dispatcher.registerCallback(FINGERPRINT_ENROLLED, [this](const Event &e) { handleFingerprintEnrolled(e); });
     dispatcher.registerCallback(FINGERPRINT_ENROLL_FAILED, [this](const Event &e) { handleFingerprintEnrollFailed(e); });
+
+    dispatcher.registerCallback(MOTION_ENABLE, [this](const Event &e) { handleMotionEnable(e); });
+}
+
+void EventHandler::handleMotionEnable(const Event &event) {
+    pir.enableMotionDetection();
 }
 
 void EventHandler::handlePlaceFinger(const Event &event) {
@@ -159,11 +161,6 @@ void EventHandler::handleESPAudioCommand(const Event &event) {
     LOG_I(TAG, "ESP audio command executed: %s", action.c_str());
 }
 
-
-void EventHandler::handleWebSocketConnected() {
-    network.sendInitMessage();
-}
-
 void EventHandler::handleAudioDataReceived(const Event &event) {
     const auto *audioData = reinterpret_cast<const uint8_t *>(event.data.c_str());
     size_t dataLength = event.dataLength;
@@ -237,10 +234,13 @@ void EventHandler::handleAccessDenied() {
 }
 
 void EventHandler::handleMotionDetected() {
+    LOG_I(TAG, "Motion detected and visitor identification initiated!");
+    ui.enableDisplay();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    fingerprint.enableSensor();
     ui.setStateFor(2, UIState::MOTION_DETECTED);
     espNow.sendCommand("capture_image");
     network.sendEvent("motion_detected", JsonObject());
-    LOG_I(TAG, "Motion detected and visitor identification initiated!");
 }
 
 void EventHandler::handlePersonDetected() {
@@ -253,12 +253,6 @@ void EventHandler::handleVisitorEntered() {
     StaticJsonDocument<256> data;
     data["event_type"] = "visitor_entered";
     network.sendEvent("visitor_entered", data.as<JsonObject>());
-}
-
-void EventHandler::handleMotionDetected(const Event &event) {
-    ui.enableDisplay();
-    fingerprint.enableSensor();
-    LOG_I(TAG, "Motion detected, components enabled");
 }
 
 void EventHandler::handleInactivityDetected(const Event &event) {

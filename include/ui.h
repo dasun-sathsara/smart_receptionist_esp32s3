@@ -74,9 +74,11 @@ private:
     static const unsigned long STATE_TIMEOUT = 30000; // 30 seconds timeout
     void displayPasswordAsAsterisks(char *password);
 
-    unsigned long stateEndTime{};
-    bool temporaryState{};
-    UIState originalState{};
+    TimerHandle_t stateTimer;
+
+    static void stateTimerCallback(TimerHandle_t xTimer);
+
+    UIState scheduledState;
 };
 
 #endif // UI_H
