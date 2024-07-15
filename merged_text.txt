@@ -136,9 +136,7 @@ private:
 #define GATE_PWM_CHANNEL 0
 #define GATE_PWM_RESOLUTION 8
 #define GATE_DUTY_CYCLE 200
-#define GATE_OPERATION_TIME 6000 // 8.5 seconds in milliseconds
-#define GATE_WAIT_TIME 5000 // 5 seconds in milliseconds
-
+#define GATE_OPERATION_TIME 5000 // 5.5 seconds in milliseconds
 #endif // CONFIG_H
 
 ############################################
@@ -312,7 +310,7 @@ private:
 
     void handleAccessDenied();
 
-    void handlePIRTriggered();
+    void handleMotionDetected();
 
     void handlePasswordInvalid();
 
@@ -627,6 +625,22 @@ private:
 
 #########################################
 
+############# include\sensor_task.h #############
+
+#ifndef SENSOR_TASK_H
+#define SENSOR_TASK_H
+
+#include <Arduino.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "config.h"
+
+void sensorTask(void *pvParameters);
+
+#endif // SENSOR_TASK_H
+
+#################################################
+
 ############# include\ui.h #############
 
 #ifndef UI_H
@@ -705,9 +719,6 @@ private:
     static const unsigned long STATE_TIMEOUT = 30000; // 30 seconds timeout
     void displayPasswordAsAsterisks(char *password);
 
-    unsigned long stateEndTime{};
-    bool temporaryState{};
-    UIState originalState{};
     TimerHandle_t stateTimer;
 
     static void stateTimerCallback(TimerHandle_t xTimer);
@@ -1047,7 +1058,7 @@ void EventHandler::registerCallbacks(EventDispatcher &dispatcher) {
     dispatcher.registerCallback(CMD_DENY_ACCESS, [this](const Event &e) { handleAccessDenied(); });
 
     // Detection Events
-    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handlePIRTriggered(); });
+    dispatcher.registerCallback(MOTION_DETECTED, [this](const Event &e) { handleMotionDetected(); });
     dispatcher.registerCallback(PERSON_DETECTED, [this](const Event &e) { handlePersonDetected(); });
 
     // Gate Events
@@ -1248,6 +1259,9 @@ void EventHandler::handleAccessDenied() {
 
 void EventHandler::handleMotionDetected() {
     LOG_I(TAG, "Motion detected and visitor identification initiated!");
+    ui.enableDisplay();
+    vTaskDelay(pdMS_TO_TICKS(500));
+    fingerprint.enableSensor();
     ui.setStateFor(2, UIState::MOTION_DETECTED);
     espNow.sendCommand("capture_image");
     network.sendEvent("motion_detected", JsonObject());
@@ -1312,15 +1326,16 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
 
     while (true) {
 
-//        if (!handler->sensorEnabled) {
-//            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
-//            continue;
-//        }
+        if (!handler->sensorEnabled) {
+            vTaskDelay(pdMS_TO_TICKS(3000)); // Check every three second if sensor should be enabled
+            continue;
+        }
 
         if (handler->isEnrolling) {
             uint8_t result = handler->getFingerprintEnroll();
             if (result == FINGERPRINT_OK) {
                 handler->isEnrolling = false;
+                vTaskDelay(pdMS_TO_TICKS(3000)); // Wait after successful enrollment before reading another finger
             } else {
                 handler->eventDispatcher->dispatchEvent({FINGERPRINT_ENROLL_FAILED, ""});
                 handler->isEnrolling = false;
@@ -1629,6 +1644,7 @@ void Gate::resumeClosing() const {
 }
 
 void Gate::gateFullyClosed() {
+    vTaskDelay(pdMS_TO_TICKS(100)); // Wait for the gate to fully close
     stopGate();
     currentState = G_CLOSED;
     eventDispatcher->dispatchEvent({GATE_CLOSED, ""});
@@ -1716,10 +1732,14 @@ void Logger::log(LogLevel level, const char *tag, const char *format, ...) {
     char fullMessage[LOG_BUFFER_SIZE];
     snprintf(fullMessage, LOG_BUFFER_SIZE, "[%s][%s]: %s", levelStr, tag, logBuffer);
 
+    // Add '[S3]' to the beginning of the message
+    char fullMessageWithS3[LOG_BUFFER_SIZE];
+    snprintf(fullMessageWithS3, LOG_BUFFER_SIZE, "[S3] %s", fullMessage);
+
     if (mqttInitialized && mqttLogger) {
-        mqttLogger->println(fullMessage);
+        mqttLogger->println(fullMessageWithS3);
     } else {
-        Serial.print("No MQTT connection available. Fallback to Serial: ");
+        Serial.println(fullMessageWithS3);
     }
 }
 
@@ -1740,12 +1760,12 @@ Logger logger;
 #include "gate.h"
 #include "pir.h"
 #include "led.h"
-#include "config.h"
 #include "event_handler.h"
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #include <PubSubClient.h>
-#include <FastLED.h>
+#include "config.h"
+#include "sensor_task.h"
 
 static const char *TAG = "MAIN";
 
@@ -1770,7 +1790,7 @@ void setup() {
     vTaskDelay(2000);
 
     // Initialize MQTT client
-    mqttClient.setServer("192.168.17.218", 1883);
+    mqttClient.setServer(WS_SERVER, 1883);
     logger.begin(mqttClient);
     mqttClient.connect("SmartReceptionist");
 
@@ -1787,8 +1807,10 @@ void setup() {
     led.begin(eventDispatcher);
     espNow.begin(eventDispatcher);
 
-
     LOG_I(TAG, "System initialization complete");
+
+    // Temporary task to check sensor states
+    xTaskCreate(sensorTask, "SensorTask", 2048, NULL, 1, NULL);
 }
 
 void loop() {
@@ -1907,8 +1929,10 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                     LOG_E(TAG, "Invalid change_state event: missing data");
                 }
             } else if (strcmp(event_type, "grant_access") == 0) {
+                LOG_I(TAG, "Received grant access command");
                 eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, ""});
             } else if (strcmp(event_type, "deny_access") == 0) {
+                LOG_I(TAG, "Received deny access command");
                 eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, ""});
             } else if (strcmp(event_type, "reset_device") == 0) {
                 LOG_I(TAG, "Received reset command. Restarting ESP32...");
@@ -2030,6 +2054,42 @@ void PIRSensor::pirTask(void *parameter) {
 
 #######################################
 
+############# src\sensor_task.cpp #############
+
+#include "sensor_task.h"
+#include "logger.h"
+
+static const char *TAG = "SensorTask";
+
+void sensorTask(void *pvParameters) {
+    int lastBreakBeamState = -1;
+    int lastDoorState = -1;
+
+    pinMode(BREAK_BEAM_PIN, INPUT_PULLUP);
+    pinMode(REED_SWITCH_PIN, INPUT_PULLUP);
+
+    while (true) {
+        int currentBreakBeamState = digitalRead(BREAK_BEAM_PIN);
+        int currentDoorState = digitalRead(REED_SWITCH_PIN);
+
+        if (currentBreakBeamState != lastBreakBeamState) {
+            LOG_I(TAG, "Break beam sensor state changed: %s",
+                  currentBreakBeamState == LOW ? "Beam broken" : "Beam intact");
+            lastBreakBeamState = currentBreakBeamState;
+        }
+
+        if (currentDoorState != lastDoorState) {
+            LOG_I(TAG, "Door sensor state changed: %s",
+                  currentDoorState == LOW ? "Door closed" : "Door open");
+            lastDoorState = currentDoorState;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(100)); // Check every 100ms
+    }
+}
+
+###############################################
+
 ############# src\ui.cpp #############
 
 #include "ui.h"
@@ -2126,7 +2186,7 @@ void UI::disableDisplay() {
 }
 
 void UI::update() {
-//    if (!displayEnabled) return;
+    if (!displayEnabled) return;
 
     char key = keypad.getKey();
     if (key) {
@@ -2135,13 +2195,6 @@ void UI::update() {
     }
 
     unsigned long currentTime = millis();
-
-    // Check for temporary state expiration
-    if (temporaryState && currentTime >= stateEndTime) {
-        setState(originalState);
-        temporaryState = false;
-        LOG_I(TAG, "UI state changed back to %d", static_cast<int>(originalState));
-    }
 
     // Check for timeout to return to welcome screen
     if (currentTime - lastStateChangeTime > STATE_TIMEOUT &&

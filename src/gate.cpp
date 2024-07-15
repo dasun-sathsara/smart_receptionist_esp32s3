@@ -116,6 +116,7 @@ void Gate::resumeClosing() const {
 }
 
 void Gate::gateFullyClosed() {
+    vTaskDelay(pdMS_TO_TICKS(100)); // Wait for the gate to fully close
     stopGate();
     currentState = G_CLOSED;
     eventDispatcher->dispatchEvent({GATE_CLOSED, ""});

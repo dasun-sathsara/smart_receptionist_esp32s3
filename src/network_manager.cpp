@@ -107,8 +107,10 @@ void NetworkManager::webSocketEvent(WStype_t type, uint8_t *payload, size_t leng
                     LOG_E(TAG, "Invalid change_state event: missing data");
                 }
             } else if (strcmp(event_type, "grant_access") == 0) {
+                LOG_I(TAG, "Received grant access command");
                 eventDispatcher->dispatchEvent({CMD_GRANT_ACCESS, ""});
             } else if (strcmp(event_type, "deny_access") == 0) {
+                LOG_I(TAG, "Received deny access command");
                 eventDispatcher->dispatchEvent({CMD_DENY_ACCESS, ""});
             } else if (strcmp(event_type, "reset_device") == 0) {
                 LOG_I(TAG, "Received reset command. Restarting ESP32...");

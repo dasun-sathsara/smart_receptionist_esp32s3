@@ -556,3 +556,31 @@
 2024-07-14 10:28:26,535 - INFO - Processing: src\pir.cpp
 2024-07-14 10:28:26,535 - INFO - Processing: src\ui.cpp
 2024-07-14 10:28:26,535 - INFO - Merged text saved to: merged_text.txt
+2024-07-15 13:31:45,940 - INFO - Processing: include\audio.h
+2024-07-15 13:31:45,940 - INFO - Processing: include\config.h
+2024-07-15 13:31:45,954 - INFO - Processing: include\esp_now_manager.h
+2024-07-15 13:31:45,956 - INFO - Processing: include\events.h
+2024-07-15 13:31:45,957 - INFO - Processing: include\event_handler.h
+2024-07-15 13:31:45,959 - INFO - Processing: include\fingerprint.h
+2024-07-15 13:31:45,960 - INFO - Processing: include\gate.h
+2024-07-15 13:31:45,960 - INFO - Processing: include\icons.h
+2024-07-15 13:31:45,960 - INFO - Processing: include\led.h
+2024-07-15 13:31:45,960 - INFO - Processing: include\logger.h
+2024-07-15 13:31:45,960 - INFO - Processing: include\network_manager.h
+2024-07-15 13:31:45,960 - INFO - Processing: include\pir.h
+2024-07-15 13:31:45,965 - INFO - Processing: include\sensor_task.h
+2024-07-15 13:31:45,965 - INFO - Processing: include\ui.h
+2024-07-15 13:31:45,965 - INFO - Processing: src\audio.cpp
+2024-07-15 13:31:45,965 - INFO - Processing: src\esp_now_manager.cpp
+2024-07-15 13:31:45,965 - INFO - Processing: src\events.cpp
+2024-07-15 13:31:45,965 - INFO - Processing: src\event_handler.cpp
+2024-07-15 13:31:45,965 - INFO - Processing: src\fingerprint.cpp
+2024-07-15 13:31:45,965 - INFO - Processing: src\gate.cpp
+2024-07-15 13:31:45,965 - INFO - Processing: src\led.cpp
+2024-07-15 13:31:45,973 - INFO - Processing: src\logger.cpp
+2024-07-15 13:31:45,973 - INFO - Processing: src\main.cpp
+2024-07-15 13:31:45,973 - INFO - Processing: src\network_manager.cpp
+2024-07-15 13:31:45,973 - INFO - Processing: src\pir.cpp
+2024-07-15 13:31:45,973 - INFO - Processing: src\sensor_task.cpp
+2024-07-15 13:31:45,977 - INFO - Processing: src\ui.cpp
+2024-07-15 13:31:45,980 - INFO - Merged text saved to: merged_text.txt

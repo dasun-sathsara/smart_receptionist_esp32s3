@@ -13,6 +13,8 @@
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #include <PubSubClient.h>
+#include "config.h"
+#include "sensor_task.h"
 
 static const char *TAG = "MAIN";
 
@@ -37,7 +39,7 @@ void setup() {
     vTaskDelay(2000);
 
     // Initialize MQTT client
-    mqttClient.setServer("192.168.17.218", 1883);
+    mqttClient.setServer(WS_SERVER, 1883);
     logger.begin(mqttClient);
     mqttClient.connect("SmartReceptionist");
 
@@ -54,8 +56,10 @@ void setup() {
     led.begin(eventDispatcher);
     espNow.begin(eventDispatcher);
 
-
     LOG_I(TAG, "System initialization complete");
+
+    // Temporary task to check sensor states
+    xTaskCreate(sensorTask, "SensorTask", 2048, NULL, 1, NULL);
 }
 
 void loop() {

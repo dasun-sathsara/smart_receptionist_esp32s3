@@ -76,7 +76,5 @@
 #define GATE_PWM_CHANNEL 0
 #define GATE_PWM_RESOLUTION 8
 #define GATE_DUTY_CYCLE 200
-#define GATE_OPERATION_TIME 6000 // 8.5 seconds in milliseconds
-#define GATE_WAIT_TIME 5000 // 5 seconds in milliseconds
-
+#define GATE_OPERATION_TIME 5000 // 5.5 seconds in milliseconds
 #endif // CONFIG_H

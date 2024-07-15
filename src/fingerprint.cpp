@@ -43,6 +43,7 @@ void FingerprintHandler::fingerprintTask(void *parameter) {
             uint8_t result = handler->getFingerprintEnroll();
             if (result == FINGERPRINT_OK) {
                 handler->isEnrolling = false;
+                vTaskDelay(pdMS_TO_TICKS(3000)); // Wait after successful enrollment before reading another finger
             } else {
                 handler->eventDispatcher->dispatchEvent({FINGERPRINT_ENROLL_FAILED, ""});
                 handler->isEnrolling = false;
