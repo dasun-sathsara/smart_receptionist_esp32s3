@@ -59,7 +59,7 @@ void setup() {
     LOG_I(TAG, "System initialization complete");
 
     // Temporary task to check sensor states
-    xTaskCreate(sensorTask, "SensorTask", 2048, NULL, 1, NULL);
+//    xTaskCreate(sensorTask, "SensorTask", 2048, NULL, 1, NULL);
 }
 
 void loop() {

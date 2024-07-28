@@ -11,13 +11,13 @@ public:
 
     [[noreturn]] static void loop(void *pvParameters);
 
-    static void sendInitMessage();
-
     static void sendAudioChunk(const uint8_t *data, size_t len);
 
     static void sendEvent(const char *eventType, const JsonObject &data);
 
     [[noreturn]] static void reconnectTask(void *pvParameters);
+
+    static void changeWebSocketServer(const char *newServer);
 
 private:
     static void webSocketEvent(WStype_t type, uint8_t *payload, size_t length);

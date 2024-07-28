@@ -34,7 +34,7 @@ private:
     bool personEntered;
 
     static EventDispatcher *eventDispatcher;
-    static const unsigned long CLOSE_DELAY = 3000; // 3 seconds delay before closing
+    static const unsigned long CLOSE_DELAY = 100; // 3 seconds delay before closing
 };
 
 #endif // GATE_H
